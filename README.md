@@ -61,6 +61,10 @@ Voraussetzung: Home Assistant 2025.1 oder neuer.
 
 Sender aus den ID-Tabellen werden automatisch übernommen, sodass auch bereits eingelernte Taster benannt werden können.
 
+### DALI-Gateway (FDG14 / FD2G14)
+
+Im Lernmodus bekommt jede **DALI-Gruppe** (0–15) eine eigene, benennbare Kachel, dazu eine Kachel **Alle Gruppen (Broadcast)**. Ungenutzte Gruppen sind ausgeblendet („Alle 16 DALI-Gruppen zeigen“). Unter *Geräte → FDG14 → Lichtszenen* lassen sich die Dimmwerte der vier Lichtszenen je Gruppe einstellen (0–100 %, leer = Gruppe bleibt unverändert). Speicherlayout laut Referenzbibliothek (`eltako14bus`): Gruppenbyte 0–15, 16 = Broadcast; Szenen in den Zeilen 2–9. **An echter DALI-Hardware noch nicht geprüft.**
+
 ### Sendertypen und Einzeltasten
 
 Jeder Sender bekommt einen Typ (Wandtaster, Fenstergriff, Kontakt, Bewegungsmelder, Helligkeits-, Temperatur-/Feuchtesensor, Raumregler, Wetterstation, Wasser-/Rauchmelder, Controller/Home Assistant). Erkannt wird er – in dieser Rangfolge – von dir gewählt › aus dem Lerntelegramm (EEP) › aus der Funktion im Gerätespeicher › aus dem Telegrammmuster. Beim Zuordnen schlägt die Integration nur passende Funktionen vor („Alle Funktionen“ bleibt wählbar) und legt den Eintrag in der richtigen Funktionsgruppe ab (z. B. Raumregler/Sensor/Kontakt beim FHK14).

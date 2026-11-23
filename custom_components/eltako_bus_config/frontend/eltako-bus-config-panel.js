@@ -84,6 +84,15 @@ input.hex.chg{border-color:var(--warning-color,#ff9800);background:rgba(255,152,
 .entry.pending{background:rgba(255,152,0,.10)}
 .entry .x{margin-left:auto;cursor:pointer;color:var(--error-color);border:none;background:none;font-size:14px}
 .tile select{width:100%;margin-top:6px;font:inherit;font-size:12.5px;padding:4px;border-radius:6px;border:1px solid var(--divider-color);background:var(--card-background-color);color:var(--primary-text-color)}
+.ctlgrid{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px}
+.ctlgrid.one{grid-template-columns:1fr}
+.ctl{border:1px solid var(--divider-color);border-radius:8px;padding:5px 6px;min-width:0}
+.ctl .chip{margin:0 0 3px 0}
+.ctl .as{font-size:11.5px;color:var(--secondary-text-color);line-height:1.35;padding-left:2px}
+.ctl .as b{font-weight:500;color:var(--primary-text-color)}
+.ctl .whole{font-size:11px;color:var(--secondary-text-color);margin-bottom:4px;padding-bottom:3px;border-bottom:1px dashed var(--divider-color)}
+.scn input{width:56px;font:inherit;font-size:13px;padding:3px 5px;border-radius:6px;border:1px solid var(--divider-color);background:var(--card-background-color);color:var(--primary-text-color);text-align:right}
+.scn input.chg{border-color:var(--warning-color,#ff9800);background:rgba(255,152,0,.08)}
 .kv{display:grid;grid-template-columns:auto 1fr;gap:4px 16px;font-size:14px}
 `;
 
@@ -259,10 +268,11 @@ class EltakoPctPanel extends HTMLElement {
     const unread = d.memory.some((r) => r === null);
     const hasTable = t.groups.length > 0;
     if (!hasTable && s.sub === "table") s.sub = "raw";
-    const tabs = [hasTable && ["table", "ID-Tabelle"], ["settings", "Einstellungen"], ["raw", "Rohspeicher"]].filter(Boolean);
+    const tabs = [hasTable && ["table", "ID-Tabelle"], this.isDali(d) && ["scenes", "Lichtszenen"], ["settings", "Einstellungen"], ["raw", "Rohspeicher"]].filter(Boolean);
     let body;
     if (unread) body = `<div class="empty-state">Der Speicher dieses Geräts wurde noch nicht gelesen.<br><br><button class="b p" data-a="read" ${s.busy ? "disabled" : ""}>Speicher auslesen</button></div>`;
     else if (s.sub === "table") body = this._tableView(d);
+    else if (s.sub === "scenes" && this.isDali(d)) body = this._scenesView(d);
     else if (s.sub === "settings") body = this._rowsView(d, t.settings_rows[0], t.settings_rows[1], "Die Einstellungszeilen sind gerätespezifisch. Bekannte Bedeutungen stehen daneben – alles andere bitte nur mit Vorlage aus einer PCT14-Sicherung ändern.");
     else body = this._rowsView(d, 0, d.memory_size, "Kompletter Gerätespeicher, 8 Byte je Zeile.");
     const pend = this.pendingFor(d.address); const n = Object.keys(pend).length;
@@ -298,7 +308,7 @@ class EltakoPctPanel extends HTMLElement {
   _channels(d, ch) {
     const m = d.type.channel_mode;
     if (m === "value") return `Geschw. ${ch}`;
-    if (m === "dali_group") return ch >= 16 ? "Broadcast" : `DALI-Gruppe ${ch}`;
+    if (m === "dali_group") return ch >= 16 ? "Alle Gruppen (Broadcast)" : (this.chUserName(d, ch) || `DALI-Gruppe ${ch}`);
     if (d.size <= 1) return ch ? (this.chUserName(d, 0) || "Kanal 1") : "–";
     const on = []; for (let i = 0; i < 8; i++) if (ch & (1 << i)) on.push(this.chUserName(d, i) || `Kanal ${i + 1}`);
     return on.length ? on.join(", ") : "keiner";
@@ -332,6 +342,23 @@ class EltakoPctPanel extends HTMLElement {
         ${rows.length ? `<table><thead><tr><th>Zeile</th><th>Sender-ID</th><th>Taste</th><th>Funktion</th><th>Kanäle</th><th>Wert</th><th></th></tr></thead><tbody>${rows.join("")}</tbody></table>` : `<div class="muted" style="padding:6px 0">Keine Einträge.</div>`}</div>`;
     }
     return h;
+  }
+
+  // DALI light scenes: 4 scenes x 16 groups, rows 2..9 (2 rows per scene, 8 groups per row); 101 = mask
+  sceneCell(d, sc, g) { return { row: 2 + (sc - 1) * 2 + (g >= 8 ? 1 : 0), idx: g % 8 }; }
+  _scenesView(d) {
+    const pend = this.pendingFor(d.address);
+    const rows = [...Array(16).keys()].map((g) => {
+      const cells = [1, 2, 3, 4].map((sc) => {
+        const { row, idx } = this.sceneCell(d, sc, g);
+        const b = hexToBytes(this.rowValue(d, row)); const v = b ? b[idx] : 0;
+        const changed = pend[row] !== undefined && hexToBytes(d.memory[row])?.[idx] !== v;
+        return `<td><input class="${changed ? "chg" : ""}" data-a="scene" data-v="${sc}|${g}" value="${v > 100 ? "" : v}" placeholder="–" inputmode="numeric"></td>`;
+      }).join("");
+      return `<tr><td class="mono">${g}</td><td>${esc(this.chUserName(d, g) || "")}</td>${cells}</tr>`;
+    }).join("");
+    return `<div class="note" style="margin-bottom:8px">Dimmwert je DALI-Gruppe in Prozent (0–100) für die vier Lichtszenen. Leer bzw. „–“ = Gruppe bleibt bei dieser Szene unverändert (Maske). Szenen werden über Szenentaster (Funktion 6/7) oder Controller abgerufen. Speicherlayout laut Referenzbibliothek, an echter Hardware noch nicht geprüft.</div>
+      <table class="scn"><thead><tr><th>Gruppe</th><th>Name</th><th>Szene 1</th><th>Szene 2</th><th>Szene 3</th><th>Szene 4</th></tr></thead><tbody>${rows}</tbody></table>`;
   }
 
   _rowsView(d, from, to, hint) {
@@ -368,9 +395,24 @@ class EltakoPctPanel extends HTMLElement {
   }
   senderName(sid) { const x = this.sender(sid); return x?.name || sid; }
   devLabel(d) { return `${d.type.name} Adr. ${d.address}${d.size > 1 ? `–${d.address + d.size - 1}` : ""}`; }
-  chDefault(d, bit) { return d.type.channel_mode === "bitmask" && d.size > 1 ? `Kanal ${bit + 1} (Adr. ${d.address + bit})` : `${d.type.name} (Adr. ${d.address})`; }
-  chAddr(d, bit) { return d.address + (d.type.channel_mode === "bitmask" && d.size > 1 && bit >= 0 ? bit : 0); }
-  chUserName(d, bit) { return this.s.channels?.[String(this.chAddr(d, bit))] || ""; }
+  isDali(d) { return d?.type?.channel_mode === "dali_group"; }
+  chDefault(d, bit) {
+    if (this.isDali(d)) return bit >= 16 ? "Alle Gruppen (Broadcast)" : `DALI-Gruppe ${bit} (Adr. ${d.address + bit})`;
+    return d.type.channel_mode === "bitmask" && d.size > 1 ? `Kanal ${bit + 1} (Adr. ${d.address + bit})` : `${d.type.name} (Adr. ${d.address})`;
+  }
+  chAddr(d, bit) {
+    if (this.isDali(d)) return bit >= 0 && bit < 16 ? d.address + bit : null;
+    return d.address + (d.type.channel_mode === "bitmask" && d.size > 1 && bit >= 0 ? bit : 0);
+  }
+  chUserName(d, bit) { const a = this.chAddr(d, bit); return a === null ? "" : this.s.channels?.[String(a)] || ""; }
+  // which tiles ("bits") an ID-table entry belongs to
+  chansOf(d, e) {
+    if (this.isDali(d)) return [e.ch >= 16 ? 16 : e.ch];
+    if (d.type.channel_mode === "bitmask" && d.size > 1) return [...Array(Math.min(8, d.size)).keys()].filter((i) => e.ch & (1 << i));
+    return [-1];
+  }
+  targetNames(d, e) { return this.chansOf(d, e).map((b) => this.chUserName(d, b) || `${d.type.name} Adr. ${d.address}${b >= 0 ? (this.isDali(d) ? (b >= 16 ? " alle Gruppen" : ` Gr. ${b}`) : ` K${b + 1}`) : ""}`); }
+  fnShort(d, k) { return this.fnLabel(d, k).replace(/ \(.*\)$/, ""); }
   chName(d, bit) { return this.chUserName(d, bit) || this.chDefault(d, bit); }
   fnLabel(d, k) { return d?.type?.function_labels?.[k] ?? this.kf[k] ?? `Funktion ${k}`; }
   keyShort(k) { return { 5: "links", 6: "rechts", 1: "LO", 2: "LU", 3: "RO", 4: "RU" }[k] || ""; }
@@ -428,7 +470,7 @@ class EltakoPctPanel extends HTMLElement {
     const snd = this.sender(sid);
     const useBit = d.type.channel_mode === "bitmask" && d.size > 1 && bit >= 0;
     // same sender + key already present? -> just add the channel to that row (like PCT14)
-    const existing = this.entriesOf(d).find((e) => e.id === sid && e.key === key && !e.removed);
+    const existing = this.entriesOf(d).find((e) => e.id === sid && e.key === key && !e.removed && (!this.isDali(d) || this.chansOf(d, e)[0] === bit));
     if (existing) {
       const ch = useBit ? existing.ch | (1 << bit) : existing.ch;
       this._openEdit(existing.row, addr, { id: sid, key, fn: existing.fn, ch, val: existing.val }, true);
@@ -438,7 +480,7 @@ class EltakoPctPanel extends HTMLElement {
     const g = this.fnGroupFor(d, fn);
     const row = this.freeRow(d, g);
     if (row === null) { this.s.error = `${g.label} von ${this.devLabel(d)} ist voll.`; this.render(); return; }
-    const ch = useBit ? 1 << bit : d.type.channel_mode === "dali_group" ? 16 : 1;
+    const ch = useBit ? 1 << bit : this.isDali(d) ? (bit >= 0 && bit <= 16 ? bit : 16) : 1;
     this._openEdit(row, addr, { id: sid, key, fn, ch, val: 0 }, true);
   }
 
@@ -463,6 +505,25 @@ class EltakoPctPanel extends HTMLElement {
       } else opts.push([`${x.id}|${withKeys ? 0 : ""}`, nm]);
     }
     return opts;
+  }
+
+  _controlsGrid(x, used, isRocker, mode) {
+    const chip = (k) => `<span class="chip" draggable="true" data-drag="${esc(x.id)}|${k}" title="${esc(this.keyLabel(k))} – auf einen Kanal ziehen">⠿ ${k ? (k >= 5 ? this.keyLabel(k) : this.keyLabel(k).replace("Taste ", "")) : "Sender"}</span>`;
+    const lines = (list, withKey) => list.map(({ d, e }) => `<div class="as">→ <b>${esc(this.targetNames(d, e).join(" + "))}</b> · ${esc(this.fnShort(d, e.fn))}${withKey && this.keyShort(e.key) ? ` (${esc(this.keyShort(e.key))})` : ""}</div>`).join("");
+    const pick = (keys) => used.filter(({ e }) => keys.includes(e.key));
+    if (!isRocker) return `<div class="ctlgrid one"><div class="ctl">${chip(0)}${lines(used, true) || `<div class="as">noch nicht zugeordnet</div>`}</div></div>`;
+    const shown = new Set();
+    const cols = [[5, 1, 2], [6, 3, 4]].map(([rk, top, bot]) => {
+      if (mode === "buttons") {
+        const whole = pick([rk]); whole.forEach((u) => shown.add(u));
+        const cell = (k) => { const l = pick([k]); l.forEach((u) => shown.add(u)); return `<div style="margin-top:4px">${chip(k)}${lines(l) || `<div class="as">–</div>`}</div>`; };
+        return `<div class="ctl">${whole.length ? `<div class="whole">ganze ${esc(this.keyLabel(rk))}:${lines(whole)}</div>` : ""}${cell(top)}${cell(bot)}</div>`;
+      }
+      const l = pick([rk, top, bot]); l.forEach((u) => shown.add(u));
+      return `<div class="ctl">${chip(rk)}${lines(l, true) || `<div class="as">noch nicht zugeordnet</div>`}</div>`;
+    });
+    const rest = used.filter((u) => !shown.has(u));
+    return `<div class="ctlgrid">${cols.join("")}</div>${rest.length ? `<div class="ctl" style="margin-top:6px"><div class="as">Weitere Einträge:</div>${lines(rest, true)}</div>` : ""}`;
   }
 
   _learnView() {
@@ -491,26 +552,28 @@ class EltakoPctPanel extends HTMLElement {
           <button class="b sm d" data-a="sender-del" data-v="${esc(x.id)}" title="Aus der Liste entfernen">✕</button></div>
         <div class="muted"><span class="mono">${esc(x.id)}</span> · ${esc(this.feedbackInfo(x) || this.typeLabel(x) || this.kindLabel(x.kind))}${x.eep ? ` · ${esc(x.eep)}` : ""}${(x.presses ?? x.count) ? ` · ${x.presses ?? x.count}× ${x.kind === "rocker" ? "gedrückt" : "empfangen"}` : x.from_memory ? " · noch nicht gehört" : ""}${lp}</div>
         <div style="margin-top:4px">${typeSel}</div>
-        <div>${keys.map((k) => `<span class="chip" draggable="true" data-drag="${esc(x.id)}|${k}" title="${esc(this.keyLabel(k))}">⠿ ${k ? (k >= 5 ? `Wippe ${this.keyShort(k)}` : this.keyLabel(k).replace("Taste ", "")) : "Sender"}</span>`).join("")}
-        ${isRocker ? `<button class="b sm" style="margin-left:4px" data-a="card-mode" data-v="${esc(x.id)}">${mode === "buttons" ? "als Wippen" : "als Einzeltasten"}</button>` : ""}</div>
-        ${used.length ? `<div class="note" style="margin-top:4px">Eingelernt: ${used.map(({ d, e }) => {
-          const chans = d.type.channel_mode === "bitmask" && d.size > 1 ? [...Array(d.size).keys()].filter((i) => e.ch & (1 << i)) : [-1];
-          const names = chans.map((i) => this.chUserName(d, i) || (i >= 0 ? `${d.type.name} Adr. ${d.address} K${i + 1}` : `${d.type.name} Adr. ${d.address}`));
-          return esc(names.join(" + ")) + (this.keyShort(e.key) ? ` (${this.keyShort(e.key)})` : "");
-        }).join(", ")}</div>` : ""}
+        ${this._controlsGrid(x, used, isRocker, mode)}
+        ${isRocker ? `<div style="margin-top:4px"><button class="b sm" data-a="card-mode" data-v="${esc(x.id)}">${mode === "buttons" ? "als Wippen anzeigen" : "als Einzeltasten anzeigen"}</button></div>` : ""}
       </div>`;
     }).join("");
     const devs = s.devices.filter((d) => !d.is_fam && d.type.groups.length);
     const opts = this._senderOptions(true);
     const tiles = devs.map((d) => {
       const unread = d.memory.some((r) => r === null);
-      const chans = d.type.channel_mode === "bitmask" && d.size > 1 ? [...Array(Math.min(8, d.size)).keys()] : [-1];
       const entries = unread ? [] : this.entriesOf(d);
+      let chans = d.type.channel_mode === "bitmask" && d.size > 1 ? [...Array(Math.min(8, d.size)).keys()] : [-1];
+      let daliHidden = 0;
+      if (this.isDali(d)) {
+        const all = [...Array(16).keys(), 16];
+        const showAll = (s.daliAll || {})[d.address];
+        chans = all.filter((b) => showAll || b === 16 || this.chUserName(d, b) || entries.some((e) => this.chansOf(d, e).includes(b)));
+        daliHidden = all.length - chans.length;
+      }
       const tile = (bit) => {
-        const mine = entries.filter((e) => bit < 0 || (e.ch & (1 << bit)));
+        const mine = entries.filter((e) => this.chansOf(d, e).includes(bit));
         const addr = this.chAddr(d, bit); const uname = this.chUserName(d, bit);
         const sugg = !uname && mine.map((e) => this.sender(e.id)).find((x) => x?.type === "controller" && x.name)?.name;
-        return `<div class="tile" data-drop="${d.address}|${bit}"><div class="t"><input class="name" style="font-weight:500;font-size:13px;width:100%;box-sizing:border-box;border:1px solid transparent;border-radius:6px;padding:2px 4px;background:transparent;color:var(--primary-text-color)" data-a="channel-name" data-v="${addr}" value="${esc(uname)}" placeholder="${esc(this.chDefault(d, bit))} – Namen vergeben…" title="Kanal benennen">
+        return `<div class="tile" data-drop="${d.address}|${bit}"><div class="t">${addr === null ? `<div style="font-weight:500;font-size:13px;padding:2px 4px">${esc(this.chDefault(d, bit))}</div>` : `<input class="name" style="font-weight:500;font-size:13px;width:100%;box-sizing:border-box;border:1px solid transparent;border-radius:6px;padding:2px 4px;background:transparent;color:var(--primary-text-color)" data-a="channel-name" data-v="${addr}" value="${esc(uname)}" placeholder="${esc(this.chDefault(d, bit))} – Namen vergeben…" title="Kanal benennen">`}
           ${uname ? `<div class="note" style="padding-left:4px">${esc(this.chDefault(d, bit))}</div>` : sugg ? `<button class="b sm" style="margin:2px 0 0 4px" data-a="channel-sugg" data-v="${addr}|${esc(sugg)}">Name übernehmen: ${esc(sugg)}</button>` : ""}</div>
           ${mine.map((e) => `<div class="entry ${e.pending ? "pending" : ""} ${e.removed ? "removed" : ""}" title="Zeile ${e.row}: Funktion ${e.fn} – ${esc(this.fnLabel(d, e.fn))}">
             <div><div class="nm">${esc(this.senderName(e.id))}${this.keyShort(e.key) ? ` <span class="muted" style="font-weight:400">· ${esc(this.keyLabel(e.key))}</span>` : ""}</div>
@@ -522,7 +585,8 @@ class EltakoPctPanel extends HTMLElement {
       };
       const n = Object.keys(this.pendingFor(d.address)).length;
       return `<div class="card" style="padding:12px"><div class="row"><b class="grow">${esc(this.devLabel(d))}</b><span class="muted">${esc(d.type.description)}</span>${n ? `<span class="badge w">${n} geändert</span>` : ""}</div>
-        ${unread ? `<div class="muted" style="margin-top:6px">Speicher noch nicht gelesen – zuerst unter „Geräte“ „Bus scannen“.</div>` : `<div class="tiles">${chans.map(tile).join("")}</div>`}</div>`;
+        ${unread ? `<div class="muted" style="margin-top:6px">Speicher noch nicht gelesen – zuerst unter „Geräte“ „Bus scannen“.</div>` : `<div class="tiles">${chans.map(tile).join("")}</div>`}
+        ${this.isDali(d) && !unread ? `<div style="margin-top:6px"><button class="b sm" data-a="dali-all" data-v="${d.address}">${(s.daliAll || {})[d.address] ? "Nur belegte und benannte Gruppen zeigen" : `Alle 16 DALI-Gruppen zeigen (${daliHidden} ausgeblendet)`}</button></div>` : ""}</div>`;
     }).join("");
     const pendDevs = Object.keys(s.pending).length;
     const pendRows = Object.values(s.pending).reduce((a, p) => a + Object.keys(p).length, 0);
@@ -628,7 +692,7 @@ class EltakoPctPanel extends HTMLElement {
     if (d.type.channel_mode === "bitmask" && d.size > 1) {
       ch = `<div class="chk">${Array.from({ length: Math.min(8, d.size) }, (_, i) => `<label><input type="checkbox" data-f="chbit" data-v="${i}" ${e.ch & (1 << i) ? "checked" : ""}> ${esc(this.chUserName(d, i) || `Kanal ${i + 1}`)}</label>`).join("")}</div>`;
     } else if (d.type.channel_mode === "dali_group") {
-      ch = `<select data-f="ch">${Array.from({ length: 17 }, (_, i) => `<option value="${i}" ${i === e.ch ? "selected" : ""}>${i === 16 ? "Broadcast (alle)" : `DALI-Gruppe ${i}`}</option>`).join("")}</select>`;
+      ch = `<select data-f="ch">${Array.from({ length: 17 }, (_, i) => `<option value="${i}" ${i === e.ch ? "selected" : ""}>${esc(i === 16 ? "Alle Gruppen (Broadcast)" : (this.chUserName(d, i) ? `${this.chUserName(d, i)} (Gruppe ${i})` : `DALI-Gruppe ${i}`))}</option>`).join("")}</select>`;
     } else {
       ch = `<input type="number" min="0" max="255" data-f="ch" value="${e.ch}">`;
     }
@@ -715,6 +779,14 @@ class EltakoPctPanel extends HTMLElement {
     else if (a === "monitor-secs") { this.s.monitorSecs = +t.value; }
     else if (a === "type-filter") { this.s.typeFilter = t.value; this.render(); }
     else if (a === "channel-name") { this._renameChannel(+t.dataset.v, t.value); }
+    else if (a === "scene") {
+      const [sc, g] = t.dataset.v.split("|").map(Number); const d = this.dev;
+      const raw = t.value.trim(); let v;
+      if (raw === "" || raw === "-" || raw === "–") v = 101;
+      else { v = parseInt(raw, 10); if (!(v >= 0 && v <= 100)) { t.classList.add("bad"); return; } }
+      const { row, idx } = this.sceneCell(d, sc, g);
+      const b = hexToBytes(this.rowValue(d, row)); b[idx] = v; this.setPending(d.address, row, bytesToHex(b)); this.render();
+    }
     else if (a === "sender-type") {
       if (!t.value) return;
       const sid = t.dataset.v; const val = t.value === "__auto" ? "" : t.value;
@@ -750,6 +822,7 @@ class EltakoPctPanel extends HTMLElement {
       case "senders-clear": { const r = await this._ws("senders/clear"); this._toast(`${r.removed} unbenannte Sender entfernt`); await this._loadSenders(); break; }
       case "unassign": { const [addr, row, bit] = v.split("|").map(Number); this._unassign(addr, row, bit); break; }
       case "discard-all": s.pending = {}; this.render(); break;
+      case "dali-all": { s.daliAll = s.daliAll || {}; s.daliAll[+v] = !s.daliAll[+v]; this.render(); break; }
       case "quick-fn": { s.dialog.e.fn = +v; this.render(); break; }
       case "channel-sugg": { const i = v.indexOf("|"); this._renameChannel(+v.slice(0, i), v.slice(i + 1)); break; }
       case "card-mode": { s.cardMode = s.cardMode || {}; s.cardMode[v] = (s.cardMode[v] || "rocker") === "rocker" ? "buttons" : "rocker"; this.render(); break; }
