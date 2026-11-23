@@ -1,6 +1,6 @@
 # Bus-Konfigurator für Eltako Baureihe 14 (Home Assistant)
 
-[![HACS Custom](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://hacs.xyz/docs/faq/custom_repositories)
+[![Marketplace / HACS Custom](https://img.shields.io/badge/Marketplace%20%2F%20HACS-Custom-41BDF5.svg)](https://github.com/NMozer/ha-eltako-bus-config)
 
 Eine Home-Assistant-Integration zum Konfigurieren von Eltako-Reiheneinbaugeräten der Baureihe 14 – eine Alternative zur Windows-Software PCT14 für deren Kernfunktionen. Bedient wird sie über ein eigenes Seitenpanel („Eltako Bus“ in der Sidebar):
 
@@ -33,12 +33,14 @@ PCT14 und diese Integration dürfen nicht gleichzeitig auf den FAM14 zugreifen.
 
 ## Installation
 
-**HACS (empfohlen, mit automatischen Updates):**
-1. HACS öffnen → oben rechts ⋮ → **Benutzerdefinierte Repositories**.
-2. Repository `https://github.com/NMozer/ha-eltako-bus-config`, Typ **Integration** → Hinzufügen.
-3. „Bus-Konfigurator für Eltako Baureihe 14“ suchen → **Herunterladen** → Home Assistant neu starten.
+**Marketplace (ab Home Assistant 2026.11, empfohlen – mit automatischen Updates):**
+1. *Einstellungen → Marketplace* öffnen → **Über Link hinzufügen** („Add from link“).
+2. `https://github.com/NMozer/ha-eltako-bus-config` einfügen, Typ **Integration** (falls gefragt). Beim ersten Mal verlangt Home Assistant eine Verbindung zu GitHub (Code auf github.com eingeben).
+3. „Bus-Konfigurator für Eltako Baureihe 14“ installieren und – wenn eine Reparaturmeldung dazu auffordert – Home Assistant neu starten.
 
-Neue Versionen zeigt HACS danach selbst als Update an.
+Neue Versionen werden danach als Update angezeigt.
+
+**Ältere Home-Assistant-Versionen mit HACS:** HACS → ⋮ → **Benutzerdefinierte Repositories** → obige Adresse, Typ **Integration**.
 
 **Manuell:** Den Ordner `custom_components/eltako_bus_config` nach `<config>/custom_components/eltako_bus_config` kopieren und Home Assistant neu starten.
 
