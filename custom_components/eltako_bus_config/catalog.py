@@ -298,6 +298,8 @@ def device_type_info(dt: DeviceType, memory_size: int) -> dict:
         "suggest": SUGGESTED_FUNCTION.get(dt.key, {}),
         "functions_by_sender": _FUNCS.get(family(dt.key) or "", {}),
         "group_by_function": {str(k): v for k, v in _GROUP_BY_FUNCTION.get(family(dt.key) or "", {}).items()},
+        "quick_functions": _QUICK.get(family(dt.key) or "", {}),
+        "function_labels": {str(k): v for k, v in _FUNCTION_LABELS.get(family(dt.key) or "", {}).items()},
     }
 
 
@@ -402,6 +404,28 @@ _FUNCS: dict[str, dict[str, list[int]]] = {
         "controller": [65],
     },
     "FMZ": {"rocker_switch": [1, 2, 3]},
+}
+
+# Quick picks in the assignment dialog: by control kind (whole rocker / single button)
+_QUICK: dict[str, dict[str, list[int]]] = {
+    "FSB": {"rocker": [2, 12, 14, 19], "button": [1, 82, 83, 84]},
+    "FSR": {"rocker": [2, 3, 5, 4], "button": [1, 5, 4, 11]},
+    "DIM": {"rocker": [2, 3, 5, 4], "button": [1, 5, 4, 6, 8]},
+    "FMZ": {"rocker": [2, 3], "button": [1]},
+}
+
+# Clearer names for functions on specific actuator families
+_FUNCTION_LABELS: dict[str, dict[int, str]] = {
+    "FSB": {
+        1: "Universaltaster (Auf – Stopp – Ab – Stopp)",
+        2: "Richtungstaster (oben = Auf, unten = Ab)",
+        12: "Zentral Auf/Ab (Wippe)",
+        82: "Zentral Auf (Einzeltaste)",
+        83: "Zentral Ab (Einzeltaste)",
+        84: "Zentral Stopp (Einzeltaste)",
+    },
+    "FSR": {4: "Zentral Aus", 5: "Zentral Ein"},
+    "DIM": {4: "Zentral Aus", 5: "Zentral Ein"},
 }
 
 # Function -> function group number, where it depends on the function (FHK family)

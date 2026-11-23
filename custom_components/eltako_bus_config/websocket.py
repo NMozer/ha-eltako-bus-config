@@ -103,7 +103,13 @@ async def _listen_stop(hass, connection, msg, manager: BusManager):
 
 
 async def _senders_list(hass, connection, msg, manager: BusManager):
-    return {"senders": manager.senders.list() if manager.senders else []}
+    if not manager.senders:
+        return {"senders": [], "channels": {}}
+    return {"senders": manager.senders.list(), "channels": dict(manager.senders.channels)}
+
+
+async def _channel_rename(hass, connection, msg, manager: BusManager):
+    return {"channels": manager.senders.rename_channel(msg["address"], msg.get("name", ""))}
 
 
 async def _senders_update(hass, connection, msg, manager: BusManager):
@@ -196,6 +202,14 @@ COMMANDS = [
     ),
     ({vol.Required("type"): f"{DOMAIN}/senders/delete", vol.Required("sender_id"): _SENDER_ID}, _senders_delete),
     ({vol.Required("type"): f"{DOMAIN}/senders/clear"}, _senders_clear),
+    (
+        {
+            vol.Required("type"): f"{DOMAIN}/channels/rename",
+            vol.Required("address"): _ADDRESS,
+            vol.Optional("name", default=""): vol.All(str, vol.Length(max=80)),
+        },
+        _channel_rename,
+    ),
     ({vol.Required("type"): f"{DOMAIN}/backup/list"}, _backup_list),
     ({vol.Required("type"): f"{DOMAIN}/backup/create", vol.Optional("name"): str}, _backup_create),
     ({vol.Required("type"): f"{DOMAIN}/backup/get", vol.Required("backup_id"): _BACKUP_ID}, _backup_get),

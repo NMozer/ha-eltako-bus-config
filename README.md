@@ -65,6 +65,10 @@ Sender aus den ID-Tabellen werden automatisch übernommen, sodass auch bereits e
 
 Jeder Sender bekommt einen Typ (Wandtaster, Fenstergriff, Kontakt, Bewegungsmelder, Helligkeits-, Temperatur-/Feuchtesensor, Raumregler, Wetterstation, Wasser-/Rauchmelder, Controller/Home Assistant). Erkannt wird er – in dieser Rangfolge – von dir gewählt › aus dem Lerntelegramm (EEP) › aus der Funktion im Gerätespeicher › aus dem Telegrammmuster. Beim Zuordnen schlägt die Integration nur passende Funktionen vor („Alle Funktionen“ bleibt wählbar) und legt den Eintrag in der richtigen Funktionsgruppe ab (z. B. Raumregler/Sensor/Kontakt beim FHK14).
 
+**Kanäle benennen:** Im Lernmodus trägst du den Namen direkt in der Kanal-Kachel ein (z. B. „Kinderzimmer West“); ist dort ein benannter Home-Assistant-Sender eingelernt, bietet die Kachel dessen Namen zur Übernahme an. Die Namen erscheinen auch in der ID-Tabelle und bei „Eingelernt“.
+
+**Schnellwahl:** Im Zuordnen-Dialog stehen die wichtigsten Funktionen als Knöpfe bereit – beim FSB14 z. B. Richtungstaster und Zentral Auf/Ab für Wippen, Universaltaster sowie Zentral Auf, Ab und Stopp für Einzeltasten; bei Schalt- und Dimmaktoren Zentral Ein/Aus.
+
 Wandtaster lassen sich **als Wippe** (Richtungstaster, Taste 5/6) oder **als Einzeltasten** zuordnen. Speicherwerte der Einzeltasten: 1 = links oben, 2 = links unten, 3 = rechts oben, 4 = rechts unten (1 und 3 an einem FSB14 gemessen).
 
 ## Typischer Ablauf

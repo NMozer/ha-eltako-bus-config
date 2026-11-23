@@ -94,7 +94,7 @@ class EltakoPctPanel extends HTMLElement {
     this.s = {
       view: "devices", info: null, devices: [], sel: null, sub: "table", showEmpty: false,
       pending: {}, progress: null, busy: false, error: null, backups: [], dialog: null, toast: null,
-      senders: [], monitorSecs: 120, monitorLock: false, hideBus: true, flash: {}, monitoring: false,
+      senders: [], channels: {}, monitorSecs: 120, monitorLock: false, hideBus: true, flash: {}, monitoring: false,
     };
     this._hass = null;
     this._unsub = null;
@@ -135,7 +135,7 @@ class EltakoPctPanel extends HTMLElement {
     this._subscribe();
     try {
       const [info, dev, snd] = await Promise.all([this._ws("info"), this._ws("devices"), this._ws("senders/list")]);
-      this.s.info = info; this.s.devices = dev.devices; this.s.senders = snd.senders;
+      this.s.info = info; this.s.devices = dev.devices; this.s.senders = snd.senders; this.s.channels = snd.channels || {};
       if (!this.s.sel && dev.devices.length) this.s.sel = (dev.devices.find((d) => !d.is_fam) || dev.devices[0]).address;
     } catch (e) { this.s.error = this._msg(e); }
     this.render();
@@ -299,9 +299,9 @@ class EltakoPctPanel extends HTMLElement {
     const m = d.type.channel_mode;
     if (m === "value") return `Geschw. ${ch}`;
     if (m === "dali_group") return ch >= 16 ? "Broadcast" : `DALI-Gruppe ${ch}`;
-    if (d.size <= 1) return ch ? "Kanal 1" : "–";
-    const on = []; for (let i = 0; i < 8; i++) if (ch & (1 << i)) on.push(i + 1);
-    return on.length ? `Kanal ${on.join(", ")}` : "keiner";
+    if (d.size <= 1) return ch ? (this.chUserName(d, 0) || "Kanal 1") : "–";
+    const on = []; for (let i = 0; i < 8; i++) if (ch & (1 << i)) on.push(this.chUserName(d, i) || `Kanal ${i + 1}`);
+    return on.length ? on.join(", ") : "keiner";
   }
 
   _tableView(d) {
@@ -314,7 +314,7 @@ class EltakoPctPanel extends HTMLElement {
         if (empty && !s.showEmpty && pend[r] === undefined) continue;
         const b = hexToBytes(hex);
         const id = idStr(b);
-        const fn = b[5]; const fnName = this.kf[fn] || `Funktion ${fn}`;
+        const fn = b[5]; const fnName = this.fnLabel(d, fn);
         const keyL = this.s.info?.key_labels?.[b[4]] || `Taste ${b[4]}`;
         rows.push(`<tr class="${pend[r] !== undefined ? "pending" : ""} ${empty ? "empty" : ""}">
           <td class="mono">${r}</td>
@@ -368,7 +368,11 @@ class EltakoPctPanel extends HTMLElement {
   }
   senderName(sid) { const x = this.sender(sid); return x?.name || sid; }
   devLabel(d) { return `${d.type.name} Adr. ${d.address}${d.size > 1 ? `–${d.address + d.size - 1}` : ""}`; }
-  chName(d, bit) { return d.type.channel_mode === "bitmask" && d.size > 1 ? `Kanal ${bit + 1} (Adr. ${d.address + bit})` : "Gerät"; }
+  chDefault(d, bit) { return d.type.channel_mode === "bitmask" && d.size > 1 ? `Kanal ${bit + 1} (Adr. ${d.address + bit})` : `${d.type.name} (Adr. ${d.address})`; }
+  chAddr(d, bit) { return d.address + (d.type.channel_mode === "bitmask" && d.size > 1 && bit >= 0 ? bit : 0); }
+  chUserName(d, bit) { return this.s.channels?.[String(this.chAddr(d, bit))] || ""; }
+  chName(d, bit) { return this.chUserName(d, bit) || this.chDefault(d, bit); }
+  fnLabel(d, k) { return d?.type?.function_labels?.[k] ?? this.kf[k] ?? `Funktion ${k}`; }
   keyShort(k) { return { 5: "links", 6: "rechts", 1: "LO", 2: "LU", 3: "RO", 4: "RU" }[k] || ""; }
   keyLabel(k) { return { 5: "Wippe links", 6: "Wippe rechts", 1: "Taste links oben", 2: "Taste links unten", 3: "Taste rechts oben", 4: "Taste rechts unten" }[k] || "Sender"; }
   typeInfo(t) { return this.s.info?.sender_types?.[t]; }
@@ -489,7 +493,11 @@ class EltakoPctPanel extends HTMLElement {
         <div style="margin-top:4px">${typeSel}</div>
         <div>${keys.map((k) => `<span class="chip" draggable="true" data-drag="${esc(x.id)}|${k}" title="${esc(this.keyLabel(k))}">⠿ ${k ? (k >= 5 ? `Wippe ${this.keyShort(k)}` : this.keyLabel(k).replace("Taste ", "")) : "Sender"}</span>`).join("")}
         ${isRocker ? `<button class="b sm" style="margin-left:4px" data-a="card-mode" data-v="${esc(x.id)}">${mode === "buttons" ? "als Wippen" : "als Einzeltasten"}</button>` : ""}</div>
-        ${used.length ? `<div class="note" style="margin-top:4px">Eingelernt: ${used.map(({ d, e }) => `${esc(d.type.name)} Adr. ${d.address}${d.type.channel_mode === "bitmask" && d.size > 1 ? ` K${[...Array(d.size).keys()].filter((i) => e.ch & (1 << i)).map((i) => i + 1).join("+")}` : ""}${this.keyShort(e.key) ? ` (${this.keyShort(e.key)})` : ""}`).join(", ")}</div>` : ""}
+        ${used.length ? `<div class="note" style="margin-top:4px">Eingelernt: ${used.map(({ d, e }) => {
+          const chans = d.type.channel_mode === "bitmask" && d.size > 1 ? [...Array(d.size).keys()].filter((i) => e.ch & (1 << i)) : [-1];
+          const names = chans.map((i) => this.chUserName(d, i) || (i >= 0 ? `${d.type.name} Adr. ${d.address} K${i + 1}` : `${d.type.name} Adr. ${d.address}`));
+          return esc(names.join(" + ")) + (this.keyShort(e.key) ? ` (${this.keyShort(e.key)})` : "");
+        }).join(", ")}</div>` : ""}
       </div>`;
     }).join("");
     const devs = s.devices.filter((d) => !d.is_fam && d.type.groups.length);
@@ -500,10 +508,13 @@ class EltakoPctPanel extends HTMLElement {
       const entries = unread ? [] : this.entriesOf(d);
       const tile = (bit) => {
         const mine = entries.filter((e) => bit < 0 || (e.ch & (1 << bit)));
-        return `<div class="tile" data-drop="${d.address}|${bit}"><div class="t">${esc(this.chName(d, bit))}</div>
-          ${mine.map((e) => `<div class="entry ${e.pending ? "pending" : ""} ${e.removed ? "removed" : ""}" title="Zeile ${e.row}: Funktion ${e.fn} – ${esc(this.kf[e.fn] || "")}">
+        const addr = this.chAddr(d, bit); const uname = this.chUserName(d, bit);
+        const sugg = !uname && mine.map((e) => this.sender(e.id)).find((x) => x?.type === "controller" && x.name)?.name;
+        return `<div class="tile" data-drop="${d.address}|${bit}"><div class="t"><input class="name" style="font-weight:500;font-size:13px;width:100%;box-sizing:border-box;border:1px solid transparent;border-radius:6px;padding:2px 4px;background:transparent;color:var(--primary-text-color)" data-a="channel-name" data-v="${addr}" value="${esc(uname)}" placeholder="${esc(this.chDefault(d, bit))} – Namen vergeben…" title="Kanal benennen">
+          ${uname ? `<div class="note" style="padding-left:4px">${esc(this.chDefault(d, bit))}</div>` : sugg ? `<button class="b sm" style="margin:2px 0 0 4px" data-a="channel-sugg" data-v="${addr}|${esc(sugg)}">Name übernehmen: ${esc(sugg)}</button>` : ""}</div>
+          ${mine.map((e) => `<div class="entry ${e.pending ? "pending" : ""} ${e.removed ? "removed" : ""}" title="Zeile ${e.row}: Funktion ${e.fn} – ${esc(this.fnLabel(d, e.fn))}">
             <div><div class="nm">${esc(this.senderName(e.id))}${this.keyShort(e.key) ? ` <span class="muted" style="font-weight:400">· ${esc(this.keyLabel(e.key))}</span>` : ""}</div>
-            <div class="muted">${esc(this.kf[e.fn] || `Funktion ${e.fn}`)}</div></div>
+            <div class="muted">${esc(this.fnLabel(d, e.fn))}</div></div>
             ${e.pending ? `<button class="x" style="color:var(--secondary-text-color)" data-a="revert" data-v="${d.address}|${e.row}" title="Änderung zurücknehmen">↺</button>`
               : `<button class="x" data-a="unassign" data-v="${d.address}|${e.row}|${bit}" title="Zuordnung entfernen">✕</button>`}</div>`).join("")}
           <select data-a="assign" data-v="${d.address}|${bit}"><option value="">+ Sender zuordnen…</option>${opts.map(([v, l]) => `<option value="${esc(v)}">${esc(l)}</option>`).join("")}</select>
@@ -538,7 +549,7 @@ class EltakoPctPanel extends HTMLElement {
     const parts = Object.entries(this.s.pending).map(([a, p]) => {
       const d = this.s.devices.find((x) => x.address === +a);
       const rows = Object.keys(p).map(Number).sort((x, y) => x - y).map((r) => {
-        const nb = hexToBytes(p[r]); const desc = isEmptyRow(p[r]) ? "Eintrag löschen" : `${esc(this.senderName(idStr(nb)))} · ${esc(this.kf[nb[5]] || `Fkt. ${nb[5]}`)}`;
+        const nb = hexToBytes(p[r]); const desc = isEmptyRow(p[r]) ? "Eintrag löschen" : `${esc(this.senderName(idStr(nb)))} · ${esc(this.fnLabel(d, nb[5]))}`;
         return `<tr><td class="mono">${r}</td><td>${desc}</td><td class="mono">${spaced(p[r])}</td></tr>`;
       }).join("");
       return `<h3 style="font-size:15px;margin:12px 0 4px">${esc(this.devLabel(d))}</h3><table><tbody>${rows}</tbody></table>`;
@@ -605,7 +616,9 @@ class EltakoPctPanel extends HTMLElement {
     const sidNorm = cleanHex(e.id).length === 8 ? idStr(hexToBytes(cleanHex(e.id))) : "";
     const sndType = this.sender(sidNorm)?.type || ([1, 2, 3, 4, 5, 6].includes(e.key) ? "rocker_switch" : null);
     const fitting = (d.type.functions_by_sender || {})[sndType] || [];
-    const opt = (k, sel) => `<option value="${k}" ${sel ? "selected" : ""}>${k} – ${esc(kf[k] ?? "unbekannt")}</option>`;
+    const opt = (k, sel) => `<option value="${k}" ${sel ? "selected" : ""}>${k} – ${esc(this.fnLabel(d, k))}</option>`;
+    const qkind = [5, 6].includes(e.key) ? "rocker" : [1, 2, 3, 4].includes(e.key) ? "button" : null;
+    const quick = (qkind && d.type.quick_functions?.[qkind]) || [];
     const fnOpts = (fitting.length ? `<optgroup label="Passend für ${esc(this.typeInfo(sndType)?.label || "")}">${fitting.map((k) => opt(k, k === e.fn)).join("")}</optgroup>` : "")
       + `<optgroup label="Alle Funktionen">${Object.keys(kf).map(Number).map((k) => opt(k, k === e.fn && !fitting.includes(k))).join("")}</optgroup>`
       + (kf[e.fn] === undefined ? `<option value="${e.fn}" selected>${e.fn} – unbekannt</option>` : "");
@@ -613,7 +626,7 @@ class EltakoPctPanel extends HTMLElement {
       + (this.s.info?.key_labels?.[e.key] === undefined ? `<option value="${e.key}" selected>Taste ${e.key}</option>` : "");
     let ch;
     if (d.type.channel_mode === "bitmask" && d.size > 1) {
-      ch = `<div class="chk">${Array.from({ length: Math.min(8, d.size) }, (_, i) => `<label><input type="checkbox" data-f="chbit" data-v="${i}" ${e.ch & (1 << i) ? "checked" : ""}> Kanal ${i + 1}</label>`).join("")}</div>`;
+      ch = `<div class="chk">${Array.from({ length: Math.min(8, d.size) }, (_, i) => `<label><input type="checkbox" data-f="chbit" data-v="${i}" ${e.ch & (1 << i) ? "checked" : ""}> ${esc(this.chUserName(d, i) || `Kanal ${i + 1}`)}</label>`).join("")}</div>`;
     } else if (d.type.channel_mode === "dali_group") {
       ch = `<select data-f="ch">${Array.from({ length: 17 }, (_, i) => `<option value="${i}" ${i === e.ch ? "selected" : ""}>${i === 16 ? "Broadcast (alle)" : `DALI-Gruppe ${i}`}</option>`).join("")}</select>`;
     } else {
@@ -629,7 +642,9 @@ class EltakoPctPanel extends HTMLElement {
       <div class="field"><label>Sender-ID</label><div class="row"><input class="grow mono" data-f="id" value="${esc(e.id)}" placeholder="FE-D4-E9-47">
         <button class="b" data-a="listen" ${l?.running ? "disabled" : ""}>Sender erfassen</button></div><div class="err" id="err-id"></div></div>
       <div class="field"><label>Taste</label><select data-f="key">${keyOpts}</select></div>
-      <div class="field"><label>Funktion</label><select data-f="fn">${fnOpts}</select>
+      <div class="field"><label>Funktion</label>
+        ${quick.length ? `<div class="row" style="gap:6px;margin-bottom:6px">${quick.map((k) => `<button class="b sm ${k === e.fn ? "p" : ""}" data-a="quick-fn" data-v="${k}">${esc(this.fnLabel(d, k).replace(/ \((Wippe|Einzeltaste)\)$/, ""))}</button>`).join("")}</div>` : ""}
+        <select data-f="fn">${fnOpts}</select>
         ${sndType && !fitting.length && sndType !== "unknown" ? `<div class="note" style="color:var(--warning-color,#e65100)">Für „${esc(this.typeInfo(sndType)?.label || sndType)}“ ist am ${esc(d.type.name)} keine passende Funktion bekannt – bitte prüfen, ob das Gerät diesen Sendertyp überhaupt unterstützt.</div>` : ""}</div>
       <div class="field"><label>${chLabel}</label>${ch}</div>
       <div class="field"><label>Wert (8. Byte, z. B. Prozent oder Zeit)</label><input type="number" min="0" max="255" data-f="val" value="${e.val}"></div>
@@ -699,6 +714,7 @@ class EltakoPctPanel extends HTMLElement {
     else if (a === "monitor-lock") { this.s.monitorLock = t.checked; this.render(); }
     else if (a === "monitor-secs") { this.s.monitorSecs = +t.value; }
     else if (a === "type-filter") { this.s.typeFilter = t.value; this.render(); }
+    else if (a === "channel-name") { this._renameChannel(+t.dataset.v, t.value); }
     else if (a === "sender-type") {
       if (!t.value) return;
       const sid = t.dataset.v; const val = t.value === "__auto" ? "" : t.value;
@@ -734,6 +750,8 @@ class EltakoPctPanel extends HTMLElement {
       case "senders-clear": { const r = await this._ws("senders/clear"); this._toast(`${r.removed} unbenannte Sender entfernt`); await this._loadSenders(); break; }
       case "unassign": { const [addr, row, bit] = v.split("|").map(Number); this._unassign(addr, row, bit); break; }
       case "discard-all": s.pending = {}; this.render(); break;
+      case "quick-fn": { s.dialog.e.fn = +v; this.render(); break; }
+      case "channel-sugg": { const i = v.indexOf("|"); this._renameChannel(+v.slice(0, i), v.slice(i + 1)); break; }
       case "card-mode": { s.cardMode = s.cardMode || {}; s.cardMode[v] = (s.cardMode[v] || "rocker") === "rocker" ? "buttons" : "rocker"; this.render(); break; }
       case "revert": { const [addr, row] = v.split("|").map(Number); const d = s.devices.find((x) => x.address === addr); this.setPending(addr, row, d.memory[row]); this.render(); break; }
       case "confirm-all": s.dialog = { type: "confirm-all" }; this.render(); break;
@@ -850,8 +868,14 @@ class EltakoPctPanel extends HTMLElement {
     this.render();
   }
 
+  _renameChannel(address, name) {
+    this._ws("channels/rename", { address, name: (name || "").trim() })
+      .then((r) => { this.s.channels = r.channels; this._renderSoon(); })
+      .catch((e) => { this.s.error = this._msg(e); this.render(); });
+  }
+
   async _loadSenders() {
-    try { this.s.senders = (await this._ws("senders/list")).senders; } catch (e) { this.s.error = this._msg(e); }
+    try { const r = await this._ws("senders/list"); this.s.senders = r.senders; this.s.channels = r.channels || {}; } catch (e) { this.s.error = this._msg(e); }
     this.render();
   }
 

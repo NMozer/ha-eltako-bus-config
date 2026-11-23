@@ -70,13 +70,24 @@ class SenderStore:
         self._load = load
         self._save = save
         self.senders: dict[str, dict[str, Any]] = {}
+        self.channels: dict[str, str] = {}  # bus address -> user given channel name
 
     async def async_load(self) -> None:
         data = await self._load() or {}
         self.senders = {s["id"]: s for s in data.get("senders", []) if "id" in s}
+        self.channels = {str(k): v for k, v in (data.get("channels") or {}).items() if v}
 
     def _persist(self) -> None:
-        self._save({"senders": list(self.senders.values())})
+        self._save({"senders": list(self.senders.values()), "channels": dict(self.channels)})
+
+    def rename_channel(self, address: int, name: str) -> dict[str, str]:
+        name = (name or "").strip()
+        if name:
+            self.channels[str(address)] = name
+        else:
+            self.channels.pop(str(address), None)
+        self._persist()
+        return dict(self.channels)
 
     def list(self) -> list[dict[str, Any]]:
         return sorted(self.senders.values(), key=lambda s: (s.get("name") or "~", s["id"]))

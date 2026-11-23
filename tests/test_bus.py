@@ -326,3 +326,26 @@ def test_single_button_numbering_matches_hardware():
     assert RadioTelegram(sid, 0x05, b"\x10", 0x30).button == 2
     assert RadioTelegram(sid, 0x05, b"\x50", 0x30).button == 4
     assert RadioTelegram(sid, 0x05, b"\x00", 0x20).button is None
+
+
+async def test_channel_names_persist():
+    from custom_components.eltako_bus_config.senders import SenderStore
+
+    saved = {}
+
+    async def load():
+        return saved.get("d")
+
+    st = SenderStore(load, lambda d: saved.__setitem__("d", d))
+    st.rename_channel(4, "  Kinderzimmer West ")
+    st.rename_channel(3, "Süd")
+    st.rename_channel(3, "")
+    again = SenderStore(load, lambda d: None)
+    await again.async_load()
+    assert again.channels == {"4": "Kinderzimmer West"}
+
+
+def test_fsb_quick_functions_and_labels():
+    info = catalog.device_type_info(catalog.identify(b"\x04\x06\x52\x00", 2), 135)
+    assert info["quick_functions"]["button"] == [1, 82, 83, 84]
+    assert info["function_labels"]["2"].startswith("Richtungstaster (oben = Auf")
