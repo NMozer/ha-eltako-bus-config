@@ -1,0 +1,48 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Eltako-Bus verbinden",
+        "description": "Wähle die serielle Schnittstelle, über die Home Assistant den Gerätespeicher der Baureihe 14 lesen und schreiben soll. Empfohlen ist die Mini-USB-Buchse des FAM14 – genau wie bei PCT14.",
+        "data": {
+          "port": "Serielle Schnittstelle",
+          "gateway": "Gateway"
+        },
+        "data_description": {
+          "port": "Am besten den stabilen Pfad unter /dev/serial/by-id verwenden.",
+          "gateway": "Der FGW14-USB-Modus ist experimentell – prüfe ihn nach der Einrichtung mit „Verbindung testen“ im Panel."
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Die Schnittstelle konnte nicht geöffnet werden (belegt oder nicht vorhanden?)."
+    },
+    "abort": {
+      "already_configured": "Bus-Konfigurator für Eltako ist bereits eingerichtet.",
+      "single_instance_allowed": "Bus-Konfigurator für Eltako ist bereits eingerichtet."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Erweiterte Einstellungen",
+        "data": {
+          "baudrate": "Baudrate",
+          "scan_timeout": "Wartezeit pro Adresse beim Bus-Scan"
+        },
+        "data_description": {
+          "scan_timeout": "Höher stellen, wenn beim Scan Geräte fehlen."
+        }
+      }
+    }
+  },
+  "selector": {
+    "gateway": {
+      "options": {
+        "fam14": "FAM14 (Mini-USB, empfohlen)",
+        "fgw14usb": "FGW14-USB (experimentell)",
+        "rs485": "Direkter RS485-Adapter am Bus (9600 Baud)"
+      }
+    }
+  }
+}

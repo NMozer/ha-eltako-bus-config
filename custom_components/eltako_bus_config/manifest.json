@@ -1,0 +1,24 @@
+{
+  "domain": "eltako_bus_config",
+  "name": "Bus-Konfigurator für Eltako Baureihe 14",
+  "codeowners": [
+    "@NMozer"
+  ],
+  "config_flow": true,
+  "dependencies": [
+    "http",
+    "frontend",
+    "panel_custom",
+    "websocket_api"
+  ],
+  "documentation": "https://github.com/NMozer/ha-eltako-bus-config",
+  "integration_type": "service",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/NMozer/ha-eltako-bus-config/issues",
+  "requirements": [
+    "pyserial>=3.5",
+    "pyserial-asyncio-fast>=0.11"
+  ],
+  "single_config_entry": true,
+  "version": "0.3.0"
+}

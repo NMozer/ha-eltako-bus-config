@@ -1,0 +1,48 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect Eltako bus",
+        "description": "Choose the serial port used to read and write the memory of Series 14 devices. The FAM14 mini USB port is recommended – just like PCT14.",
+        "data": {
+          "port": "Serial port",
+          "gateway": "Gateway"
+        },
+        "data_description": {
+          "port": "Prefer the stable path under /dev/serial/by-id.",
+          "gateway": "FGW14-USB mode is experimental – verify it with 'Test connection' in the panel."
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "The serial port could not be opened (in use or missing?)."
+    },
+    "abort": {
+      "already_configured": "Already configured.",
+      "single_instance_allowed": "Already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Advanced settings",
+        "data": {
+          "baudrate": "Baud rate",
+          "scan_timeout": "Wait time per address during bus scan"
+        },
+        "data_description": {
+          "scan_timeout": "Increase if devices are missing after a scan."
+        }
+      }
+    }
+  },
+  "selector": {
+    "gateway": {
+      "options": {
+        "fam14": "FAM14 (mini USB, recommended)",
+        "fgw14usb": "FGW14-USB (experimental)",
+        "rs485": "Direct RS485 adapter on the bus (9600 baud)"
+      }
+    }
+  }
+}
