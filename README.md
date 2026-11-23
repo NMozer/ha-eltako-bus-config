@@ -1,3 +1,5 @@
+<img src="custom_components/eltako_bus_config/brand/logo.png" alt="Bus-Konfigurator – Baureihe 14" height="96">
+
 # Bus-Konfigurator für Eltako Baureihe 14 (Home Assistant)
 
 [![Marketplace / HACS Custom](https://img.shields.io/badge/Marketplace%20%2F%20HACS-Custom-41BDF5.svg)](https://github.com/NMozer/ha-eltako-bus-config)
@@ -107,6 +109,10 @@ pytest
 ## Dank
 
 Das Busprotokoll und die Speicherlayouts stammen aus dem Reverse Engineering von [eltako14bus](https://github.com/grimmpp/eltako14bus) (Christian Amsüss, Energy Harvesting Solutions, Philipp Grimm). Ergänzt wurden sie durch [eo_man](https://github.com/grimmpp/enocean-device-manager). Diese Integration enthält keinen Code aus diesen Projekten, sondern eine eigene asynchrone Implementierung. „Eltako“ und „PCT14“ sind Marken der Eltako GmbH und werden hier nur verwendet, um anzugeben, mit welchen Geräten diese Software zusammenarbeitet. Dieses Projekt ist kein Produkt von Eltako und steht in keiner Verbindung zur Eltako GmbH.
+
+## Logo
+
+Eigenes Motiv (Reiheneinbaugeräte auf der Hutschiene mit Drehschalter, Funk und Busleitung); es verwendet keine Marken, Logos oder Farben von Eltako. Quelldateien in `docs/brand-src/`. Home Assistant zeigt es ab Version 2026.3 automatisch an (`custom_components/eltako_bus_config/brand/`).
 
 ## Lizenz
 

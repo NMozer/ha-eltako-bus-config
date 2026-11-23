@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2000 512" width="2000" height="512">
+  <g>  <rect x="0" y="0" width="512" height="512" rx="112" fill="#0F4462"/>
+  <!-- radio waves above the centre module -->
+  <g fill="none" stroke="#3FD1BE" stroke-linecap="round" stroke-width="18">
+    <path d="M206 112 A70 70 0 0 1 306 112"/>
+    <path d="M178 82 A110 110 0 0 1 334 82" opacity="0.55"/>
+  </g>
+  <!-- DIN rail -->
+  <rect x="40" y="292" width="432" height="34" rx="6" fill="#8FB3C7"/>
+  <g fill="#14506F"><rect x="62" y="304" width="22" height="10" rx="5"/><rect x="428" y="304" width="22" height="10" rx="5"/></g>
+  <!-- left module -->
+  <g>
+    <rect x="70" y="160" width="110" height="250" rx="16" fill="#E9F1F5"/>
+    <circle cx="125" cy="222" r="24" fill="#C9D9E2"/><rect x="122" y="202" width="6" height="22" rx="3" fill="#5D7D8F"/>
+    <circle cx="105" cy="372" r="8" fill="#5D7D8F"/>
+  </g>
+  <!-- centre module (highlighted) -->
+  <g>
+    <rect x="201" y="140" width="110" height="270" rx="16" fill="#FFFFFF"/>
+    <rect x="201" y="140" width="110" height="64" rx="16" fill="#3FD1BE"/>
+    <rect x="201" y="180" width="110" height="24" fill="#3FD1BE"/>
+    <circle cx="256" cy="252" r="30" fill="#0B3450"/>
+    <rect x="252" y="226" width="8" height="28" rx="4" fill="#3FD1BE" transform="rotate(40 256 252)"/>
+    <circle cx="236" cy="372" r="9" fill="#3FD1BE"/>
+    <rect x="254" y="366" width="38" height="12" rx="6" fill="#C9D9E2"/>
+  </g>
+  <!-- right module -->
+  <g>
+    <rect x="332" y="160" width="110" height="250" rx="16" fill="#E9F1F5"/>
+    <circle cx="387" cy="222" r="24" fill="#C9D9E2"/><rect x="384" y="202" width="6" height="22" rx="3" fill="#5D7D8F" transform="rotate(-60 387 222)"/>
+    <circle cx="367" cy="372" r="8" fill="#5D7D8F"/>
+  </g>
+  <!-- bus line -->
+  <path d="M125 410 V440 H387 V410 M256 410 V440" fill="none" stroke="#3FD1BE" stroke-width="12" stroke-linejoin="round" stroke-linecap="round"/></g>
+  <text x="580" y="262" font-family="DM Sans, Fira Sans, sans-serif" font-weight="700" font-size="168" fill="#F2F7FA" letter-spacing="-2">Bus-Konfigurator</text>
+  <text x="586" y="400" font-family="DM Sans, Fira Sans, sans-serif" font-weight="500" font-size="96" fill="#3FD1BE">Baureihe 14 · RS485-Bus</text>
+</svg>

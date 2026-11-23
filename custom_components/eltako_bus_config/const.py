@@ -25,4 +25,4 @@ STATIC_URL = "/eltako_bus_config_static"
 PROGRESS_EVENT = "eltako_bus_config_progress"
 STORAGE_KEY = "eltako_bus_config.devices"
 STORAGE_VERSION = 1
-VERSION = "0.3.0"
+VERSION = "0.3.1"
