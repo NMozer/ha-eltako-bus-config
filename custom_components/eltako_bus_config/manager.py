@@ -547,7 +547,7 @@ class BusManager:
                         continue
                     sid = id_to_str(val[:4])
                     kind = "bus_sender" if val[:3] == b"\x00\x00\xb0" else "unknown"
-                    self.senders.add_known(sid, kind=kind, key=val[4])
+                    self.senders.add_known(sid, kind=kind, key=val[4], function=val[5])
 
     # --------------------------------------------------------------- backups
     def _backup_payload(self, devices: list[BusDevice], *, name: str, kind: str) -> dict[str, Any]:

@@ -61,6 +61,12 @@ Voraussetzung: Home Assistant 2025.1 oder neuer.
 
 Sender aus den ID-Tabellen werden automatisch übernommen, sodass auch bereits eingelernte Taster benannt werden können.
 
+### Sendertypen und Einzeltasten
+
+Jeder Sender bekommt einen Typ (Wandtaster, Fenstergriff, Kontakt, Bewegungsmelder, Helligkeits-, Temperatur-/Feuchtesensor, Raumregler, Wetterstation, Wasser-/Rauchmelder, Controller/Home Assistant). Erkannt wird er – in dieser Rangfolge – von dir gewählt › aus dem Lerntelegramm (EEP) › aus der Funktion im Gerätespeicher › aus dem Telegrammmuster. Beim Zuordnen schlägt die Integration nur passende Funktionen vor („Alle Funktionen“ bleibt wählbar) und legt den Eintrag in der richtigen Funktionsgruppe ab (z. B. Raumregler/Sensor/Kontakt beim FHK14).
+
+Wandtaster lassen sich **als Wippe** (Richtungstaster, Taste 5/6) oder **als Einzeltasten** zuordnen. Speicherwerte der Einzeltasten: 1 = links oben, 2 = links unten, 3 = rechts oben, 4 = rechts unten (1 und 3 an einem FSB14 gemessen).
+
 ## Typischer Ablauf
 
 1. **Sicherungen → Neue Sicherung.** Damit sicherst du den Ist-Stand des ganzen Busses.

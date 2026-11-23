@@ -369,7 +369,20 @@ class EltakoPctPanel extends HTMLElement {
   senderName(sid) { const x = this.sender(sid); return x?.name || sid; }
   devLabel(d) { return `${d.type.name} Adr. ${d.address}${d.size > 1 ? `–${d.address + d.size - 1}` : ""}`; }
   chName(d, bit) { return d.type.channel_mode === "bitmask" && d.size > 1 ? `Kanal ${bit + 1} (Adr. ${d.address + bit})` : "Gerät"; }
-  keyShort(k) { return k === 5 ? "links" : k === 6 ? "rechts" : ""; }
+  keyShort(k) { return { 5: "links", 6: "rechts", 1: "LO", 2: "LU", 3: "RO", 4: "RU" }[k] || ""; }
+  keyLabel(k) { return { 5: "Wippe links", 6: "Wippe rechts", 1: "Taste links oben", 2: "Taste links unten", 3: "Taste rechts oben", 4: "Taste rechts unten" }[k] || "Sender"; }
+  typeInfo(t) { return this.s.info?.sender_types?.[t]; }
+  typeLabel(x) { return this.typeInfo(x.type)?.label; }
+  sourceLabel(src) { return { eep: "aus Lerntelegramm", memory: "aus Gerätespeicher", pattern: "aus Telegramm erkannt", manual: "von dir gewählt" }[src] || ""; }
+  fnGroupFor(d, fn) {
+    const nr = d.type.group_by_function?.[fn];
+    const groups = d.type.groups;
+    return groups.find((g) => g.number === nr) || groups[groups.length - 1];
+  }
+  freeRow(d, g, exclude = null) {
+    for (let r = g.start; r < g.end; r++) if (r !== exclude && isEmptyRow(this.rowValue(d, r))) return r;
+    return null;
+  }
 
   entriesOf(d) {
     const out = [];
@@ -390,6 +403,15 @@ class EltakoPctPanel extends HTMLElement {
   }
   suggestFn(d, snd, key) {
     const sg = d.type.suggest || {};
+    const fb = d.type.functions_by_sender || {};
+    let t = snd?.type;
+    if (!t && (snd?.id || "").startsWith("00-00-B0-")) t = "controller";
+    if (!t && [1, 2, 3, 4, 5, 6].includes(key)) t = "rocker_switch";
+    const list = fb[t];
+    if (list?.length) {
+      if ([1, 2, 3, 4].includes(key)) return list.find((f) => f !== 2 && f !== 3) ?? list[0];
+      return list[0];
+    }
     if (snd?.kind === "bus_sender" || (snd?.id || "").startsWith("00-00-B0-")) return sg.bus_sender ?? 51;
     if (snd?.eep && this.s.info?.eep_functions?.[snd.eep] !== undefined) return this.s.info.eep_functions[snd.eep];
     if (key === 5 || key === 6 || snd?.kind === "rocker") return sg.rocker ?? 2;
@@ -408,11 +430,12 @@ class EltakoPctPanel extends HTMLElement {
       this._openEdit(existing.row, addr, { id: sid, key, fn: existing.fn, ch, val: existing.val }, true);
       return;
     }
-    const groups = d.type.groups; const g = groups[groups.length - 1];
-    let row = null; for (let r = g.start; r < g.end; r++) if (isEmptyRow(this.rowValue(d, r))) { row = r; break; }
+    const fn = this.suggestFn(d, snd, key);
+    const g = this.fnGroupFor(d, fn);
+    const row = this.freeRow(d, g);
     if (row === null) { this.s.error = `${g.label} von ${this.devLabel(d)} ist voll.`; this.render(); return; }
     const ch = useBit ? 1 << bit : d.type.channel_mode === "dali_group" ? 16 : 1;
-    this._openEdit(row, addr, { id: sid, key, fn: this.suggestFn(d, snd, key), ch, val: 0 }, true);
+    this._openEdit(row, addr, { id: sid, key, fn, ch, val: 0 }, true);
   }
 
   _unassign(addr, row, bit) {
@@ -427,28 +450,46 @@ class EltakoPctPanel extends HTMLElement {
     const list = this.s.senders.filter((x) => !x.hidden && !this.feedbackInfo(x));
     const opts = [];
     for (const x of list) {
-      const nm = x.name ? `${x.name} (${x.id})` : x.id;
-      if (withKeys && x.keys?.length) for (const k of x.keys) opts.push([`${x.id}|${k}`, `${nm} – Wippe ${this.keyShort(k)}`]);
-      else opts.push([`${x.id}|${withKeys ? 0 : ""}`, nm]);
+      const tl = this.typeLabel(x);
+      const nm = (x.name ? `${x.name} (${x.id})` : x.id) + (tl ? ` · ${tl}` : "");
+      if (withKeys && (x.type === "rocker_switch" || x.keys?.length || x.buttons?.length)) {
+        const rockers = x.keys?.length ? x.keys : [5, 6];
+        const buttons = [...new Set([...rockers.flatMap((k) => (k === 5 ? [1, 2] : [3, 4])), ...(x.buttons || [])])].sort();
+        for (const k of [...rockers, ...buttons]) opts.push([`${x.id}|${k}`, `${nm} – ${this.keyLabel(k)}`]);
+      } else opts.push([`${x.id}|${withKeys ? 0 : ""}`, nm]);
     }
     return opts;
   }
 
   _learnView() {
     const s = this.s; const now = Date.now();
-    const list = s.senders.filter((x) => !(s.hideBus && this.feedbackInfo(x) && !this.usage(x.id).length));
+    const list = s.senders.filter((x) => !(s.hideBus && this.feedbackInfo(x) && !this.usage(x.id).length))
+      .filter((x) => !s.typeFilter || (s.typeFilter === "__none" ? !x.type : x.type === s.typeFilter));
     const hiddenCount = s.senders.length - list.length;
     const cards = list.map((x) => {
       const hot = now - (s.flash[x.id] || 0) < 8000;
       const used = this.usage(x.id);
-      const keys = x.keys?.length ? x.keys : [0];
+      const isRocker = x.type === "rocker_switch" || x.keys?.length || x.buttons?.length;
+      const mode = (s.cardMode || {})[x.id] || "rocker";
+      let keys;
+      if (!isRocker) keys = [0];
+      else if (mode === "buttons") {
+        const rockers = x.keys?.length ? x.keys : [5, 6];
+        keys = [...new Set([...rockers.flatMap((k) => (k === 5 ? [1, 2] : [3, 4])), ...(x.buttons || [])])].sort();
+      } else keys = x.keys?.length ? x.keys : [5, 6];
+      const typeSel = `<select data-a="sender-type" data-v="${esc(x.id)}" style="font:inherit;font-size:12px;padding:2px 4px;border-radius:6px;border:1px solid var(--divider-color);background:var(--card-background-color);color:var(--primary-text-color);max-width:100%">
+        <option value="">Typ: ${esc(this.typeLabel(x) || "unbekannt")}${x.type_source ? ` (${esc(this.sourceLabel(x.type_source))})` : ""}</option>
+        ${Object.entries(s.info?.sender_types || {}).filter(([k]) => k !== "unknown").map(([k, v]) => `<option value="${k}">→ ${esc(v.label)}${v.examples ? ` (${esc(v.examples)})` : ""}</option>`).join("")}
+        ${x.type_source === "manual" ? `<option value="__auto">↺ wieder automatisch erkennen</option>` : ""}</select>`;
       const lp = x.last_press && hot ? ` · gerade: Wippe ${this.keyShort(x.last_press.key)} ${x.last_press.direction}` : "";
       return `<div class="scard ${hot ? "hot" : ""}">
         <div class="row" style="flex-wrap:nowrap"><input class="name" data-a="sender-name" data-v="${esc(x.id)}" value="${esc(x.name || "")}" placeholder="Namen vergeben…">
           <button class="b sm d" data-a="sender-del" data-v="${esc(x.id)}" title="Aus der Liste entfernen">✕</button></div>
-        <div class="muted"><span class="mono">${esc(x.id)}</span> · ${esc(this.feedbackInfo(x) || this.kindLabel(x.kind))}${x.eep ? ` · ${esc(x.eep)}` : ""}${(x.presses ?? x.count) ? ` · ${x.presses ?? x.count}× ${x.kind === "rocker" ? "gedrückt" : "empfangen"}` : x.from_memory ? " · noch nicht gehört" : ""}${lp}</div>
-        <div>${keys.map((k) => `<span class="chip" draggable="true" data-drag="${esc(x.id)}|${k}">⠿ ${k ? `Wippe ${this.keyShort(k)}` : "Sender"}</span>`).join("")}</div>
-        ${used.length ? `<div class="note" style="margin-top:4px">Eingelernt: ${used.map(({ d, e }) => `${esc(d.type.name)} Adr. ${d.address}${d.type.channel_mode === "bitmask" && d.size > 1 ? ` K${[...Array(d.size).keys()].filter((i) => e.ch & (1 << i)).map((i) => i + 1).join("+")}` : ""}${e.key === 5 || e.key === 6 ? ` (${this.keyShort(e.key)})` : ""}`).join(", ")}</div>` : ""}
+        <div class="muted"><span class="mono">${esc(x.id)}</span> · ${esc(this.feedbackInfo(x) || this.typeLabel(x) || this.kindLabel(x.kind))}${x.eep ? ` · ${esc(x.eep)}` : ""}${(x.presses ?? x.count) ? ` · ${x.presses ?? x.count}× ${x.kind === "rocker" ? "gedrückt" : "empfangen"}` : x.from_memory ? " · noch nicht gehört" : ""}${lp}</div>
+        <div style="margin-top:4px">${typeSel}</div>
+        <div>${keys.map((k) => `<span class="chip" draggable="true" data-drag="${esc(x.id)}|${k}" title="${esc(this.keyLabel(k))}">⠿ ${k ? (k >= 5 ? `Wippe ${this.keyShort(k)}` : this.keyLabel(k).replace("Taste ", "")) : "Sender"}</span>`).join("")}
+        ${isRocker ? `<button class="b sm" style="margin-left:4px" data-a="card-mode" data-v="${esc(x.id)}">${mode === "buttons" ? "als Wippen" : "als Einzeltasten"}</button>` : ""}</div>
+        ${used.length ? `<div class="note" style="margin-top:4px">Eingelernt: ${used.map(({ d, e }) => `${esc(d.type.name)} Adr. ${d.address}${d.type.channel_mode === "bitmask" && d.size > 1 ? ` K${[...Array(d.size).keys()].filter((i) => e.ch & (1 << i)).map((i) => i + 1).join("+")}` : ""}${this.keyShort(e.key) ? ` (${this.keyShort(e.key)})` : ""}`).join(", ")}</div>` : ""}
       </div>`;
     }).join("");
     const devs = s.devices.filter((d) => !d.is_fam && d.type.groups.length);
@@ -461,7 +502,7 @@ class EltakoPctPanel extends HTMLElement {
         const mine = entries.filter((e) => bit < 0 || (e.ch & (1 << bit)));
         return `<div class="tile" data-drop="${d.address}|${bit}"><div class="t">${esc(this.chName(d, bit))}</div>
           ${mine.map((e) => `<div class="entry ${e.pending ? "pending" : ""} ${e.removed ? "removed" : ""}" title="Zeile ${e.row}: Funktion ${e.fn} – ${esc(this.kf[e.fn] || "")}">
-            <div><div class="nm">${esc(this.senderName(e.id))}${e.key === 5 || e.key === 6 ? ` <span class="muted" style="font-weight:400">· Wippe ${this.keyShort(e.key)}</span>` : ""}</div>
+            <div><div class="nm">${esc(this.senderName(e.id))}${this.keyShort(e.key) ? ` <span class="muted" style="font-weight:400">· ${esc(this.keyLabel(e.key))}</span>` : ""}</div>
             <div class="muted">${esc(this.kf[e.fn] || `Funktion ${e.fn}`)}</div></div>
             ${e.pending ? `<button class="x" style="color:var(--secondary-text-color)" data-a="revert" data-v="${d.address}|${e.row}" title="Änderung zurücknehmen">↺</button>`
               : `<button class="x" data-a="unassign" data-v="${d.address}|${e.row}|${bit}" title="Zuordnung entfernen">✕</button>`}</div>`).join("")}
@@ -483,7 +524,10 @@ class EltakoPctPanel extends HTMLElement {
           <label class="muted"><input type="checkbox" data-a="hide-bus" ${s.hideBus ? "checked" : ""}> Rückmeldungen der Aktoren ausblenden${s.hideBus && hiddenCount ? ` (${hiddenCount} ausgeblendet)` : ""}</label>
           <span class="grow"></span><button class="b sm" data-a="senders-clear">Unbenannte entfernen</button></div></div>
       <div class="learn"><div>
-        <div class="muted" style="margin:0 0 6px">${list.length} Sender · Chips auf einen Kanal ziehen</div>
+        <div class="row" style="margin:0 0 6px"><span class="muted grow">${list.length} Sender · Chips auf einen Kanal ziehen</span>
+          <select data-a="type-filter" style="font:inherit;font-size:12.5px;padding:3px 6px;border-radius:6px;border:1px solid var(--divider-color);background:var(--card-background-color);color:var(--primary-text-color)">
+            <option value="">Alle Typen</option>${Object.entries(s.info?.sender_types || {}).filter(([k]) => k !== "unknown").map(([k, v]) => `<option value="${k}" ${s.typeFilter === k ? "selected" : ""}>${esc(v.label)}</option>`).join("")}
+            <option value="__none" ${s.typeFilter === "__none" ? "selected" : ""}>Ohne Typ</option></select></div>
         ${cards || `<div class="card empty-state">Noch keine Sender. Starte „Lauschen“ und drücke deine Taster.</div>`}</div>
         <div>${tiles || `<div class="card empty-state">Keine Aktoren mit ID-Tabelle bekannt. Zuerst unter „Geräte“ den Bus scannen.</div>`}
         ${pendDevs ? `<div class="pendingbar"><b>${pendRows} Änderung${pendRows > 1 ? "en" : ""} an ${pendDevs} Gerät${pendDevs > 1 ? "en" : ""}</b><span class="grow"></span>
@@ -558,7 +602,12 @@ class EltakoPctPanel extends HTMLElement {
 
   _editDialog(g) {
     const d = this.s.devices.find((x) => x.address === g.address) || this.dev; const e = g.e; const kf = this.kf;
-    const fnOpts = Object.entries(kf).map(([k, v]) => `<option value="${k}" ${+k === e.fn ? "selected" : ""}>${k} – ${esc(v)}</option>`).join("")
+    const sidNorm = cleanHex(e.id).length === 8 ? idStr(hexToBytes(cleanHex(e.id))) : "";
+    const sndType = this.sender(sidNorm)?.type || ([1, 2, 3, 4, 5, 6].includes(e.key) ? "rocker_switch" : null);
+    const fitting = (d.type.functions_by_sender || {})[sndType] || [];
+    const opt = (k, sel) => `<option value="${k}" ${sel ? "selected" : ""}>${k} – ${esc(kf[k] ?? "unbekannt")}</option>`;
+    const fnOpts = (fitting.length ? `<optgroup label="Passend für ${esc(this.typeInfo(sndType)?.label || "")}">${fitting.map((k) => opt(k, k === e.fn)).join("")}</optgroup>` : "")
+      + `<optgroup label="Alle Funktionen">${Object.keys(kf).map(Number).map((k) => opt(k, k === e.fn && !fitting.includes(k))).join("")}</optgroup>`
       + (kf[e.fn] === undefined ? `<option value="${e.fn}" selected>${e.fn} – unbekannt</option>` : "");
     const keyOpts = Object.entries(this.s.info?.key_labels || {}).map(([k, v]) => `<option value="${k}" ${+k === e.key ? "selected" : ""}>${esc(v)}</option>`).join("")
       + (this.s.info?.key_labels?.[e.key] === undefined ? `<option value="${e.key}" selected>Taste ${e.key}</option>` : "");
@@ -580,7 +629,8 @@ class EltakoPctPanel extends HTMLElement {
       <div class="field"><label>Sender-ID</label><div class="row"><input class="grow mono" data-f="id" value="${esc(e.id)}" placeholder="FE-D4-E9-47">
         <button class="b" data-a="listen" ${l?.running ? "disabled" : ""}>Sender erfassen</button></div><div class="err" id="err-id"></div></div>
       <div class="field"><label>Taste</label><select data-f="key">${keyOpts}</select></div>
-      <div class="field"><label>Funktion</label><select data-f="fn">${fnOpts}</select></div>
+      <div class="field"><label>Funktion</label><select data-f="fn">${fnOpts}</select>
+        ${sndType && !fitting.length && sndType !== "unknown" ? `<div class="note" style="color:var(--warning-color,#e65100)">Für „${esc(this.typeInfo(sndType)?.label || sndType)}“ ist am ${esc(d.type.name)} keine passende Funktion bekannt – bitte prüfen, ob das Gerät diesen Sendertyp überhaupt unterstützt.</div>` : ""}</div>
       <div class="field"><label>${chLabel}</label>${ch}</div>
       <div class="field"><label>Wert (8. Byte, z. B. Prozent oder Zeit)</label><input type="number" min="0" max="255" data-f="val" value="${e.val}"></div>
       <div class="note mono" id="preview">${spaced(this._encode(e))}</div>
@@ -648,6 +698,13 @@ class EltakoPctPanel extends HTMLElement {
     else if (a === "hide-bus") { this.s.hideBus = t.checked; this.render(); }
     else if (a === "monitor-lock") { this.s.monitorLock = t.checked; this.render(); }
     else if (a === "monitor-secs") { this.s.monitorSecs = +t.value; }
+    else if (a === "type-filter") { this.s.typeFilter = t.value; this.render(); }
+    else if (a === "sender-type") {
+      if (!t.value) return;
+      const sid = t.dataset.v; const val = t.value === "__auto" ? "" : t.value;
+      this._ws("senders/update", { sender_id: sid, sender_type: val }).then(async () => { await this._loadSenders(); })
+        .catch((e) => { this.s.error = this._msg(e); this.render(); });
+    }
     else if (a === "assign") { if (!t.value) return; const [sid, k] = t.value.split("|"); const [addr, bit] = t.dataset.v.split("|").map(Number); this._assign(addr, bit, sid, +k || 0); }
     else if (a === "sender-name") {
       const sid = t.dataset.v; const name = t.value.trim();
@@ -677,6 +734,7 @@ class EltakoPctPanel extends HTMLElement {
       case "senders-clear": { const r = await this._ws("senders/clear"); this._toast(`${r.removed} unbenannte Sender entfernt`); await this._loadSenders(); break; }
       case "unassign": { const [addr, row, bit] = v.split("|").map(Number); this._unassign(addr, row, bit); break; }
       case "discard-all": s.pending = {}; this.render(); break;
+      case "card-mode": { s.cardMode = s.cardMode || {}; s.cardMode[v] = (s.cardMode[v] || "rocker") === "rocker" ? "buttons" : "rocker"; this.render(); break; }
       case "revert": { const [addr, row] = v.split("|").map(Number); const d = s.devices.find((x) => x.address === addr); this.setPending(addr, row, d.memory[row]); this.render(); break; }
       case "confirm-all": s.dialog = { type: "confirm-all" }; this.render(); break;
       case "write-all": {
@@ -727,7 +785,17 @@ class EltakoPctPanel extends HTMLElement {
       case "edit-ok": {
         const g = s.dialog; const id = cleanHex(g.e.id);
         if (!/^[0-9a-f]{8}$/.test(id)) { this.shadowRoot.getElementById("err-id").textContent = "Die Sender-ID braucht 8 Hex-Zeichen, z. B. FE-D4-E9-47."; return; }
-        this.setPending(g.address ?? s.sel, g.row, this._encode(g.e)); s.dialog = null; this.render();
+        const addr = g.address ?? s.sel; const dv = s.devices.find((x) => x.address === addr);
+        let row = g.row;
+        if (g.fromLearn && dv) {
+          const want = this.fnGroupFor(dv, g.e.fn);
+          if (row < want.start || row >= want.end) {
+            const nr = this.freeRow(dv, want);
+            if (nr === null) { s.error = `${want.label} von ${this.devLabel(dv)} ist voll.`; s.dialog = null; this.render(); return; }
+            row = nr;
+          }
+        }
+        this.setPending(addr, row, this._encode(g.e)); s.dialog = null; this.render();
         break;
       }
       case "listen": {

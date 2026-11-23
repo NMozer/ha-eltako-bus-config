@@ -279,3 +279,50 @@ async def test_scan_registers_senders_from_memory(tmp_path):
     await manager.scan()
     entry = manager.senders.senders["FE-D4-E9-47"]
     assert entry.get("from_memory") and entry["keys"] == [5]
+
+
+def test_sender_type_detection_and_priority():
+    from custom_components.eltako_bus_config.protocol import RadioTelegram
+    from custom_components.eltako_bus_config.senders import SenderStore
+
+    async def load():
+        return None
+
+    st = SenderStore(load, lambda d: None)
+    sid = bytes.fromhex("fece5eae")
+    e = st.observe(RadioTelegram(sid, 0x05, b"\x30", 0x30))
+    assert (e["type"], e["type_source"]) == ("rocker_switch", "pattern")
+    # memory says it is used as a window contact -> memory beats pattern
+    st.add_known("FE-CE-5E-AE", function=16)
+    assert (e["type"], e["type_source"]) == ("contact", "memory")
+    # manual beats everything, and stays when new telegrams arrive
+    st.update("FE-CE-5E-AE", sender_type="rocker_switch")
+    st.observe(RadioTelegram(sid, 0x05, b"\x10", 0x30))
+    assert (e["type"], e["type_source"]) == ("rocker_switch", "manual")
+    # 4BS teach-in with EEP A5-07-01 -> motion detector
+    m = st.observe(RadioTelegram(bytes.fromhex("05123456"), 0x07, bytes([0x1C, 0x08, 0x0B, 0x80]), 0))
+    assert (m["type"], m["type_source"], m["eep"]) == ("motion", "eep", "A5-07-01")
+    # HA bus sender
+    h = st.add_known("00-00-B0-01", kind="bus_sender", function=31)
+    assert h["type"] == "controller"
+
+
+def test_function_lists_and_groups():
+    fsb = catalog.device_type_info(catalog.identify(b"\x04\x06\x52\x00", 2), 135)
+    assert fsb["functions_by_sender"]["controller"][0] == 31
+    assert 1 in fsb["functions_by_sender"]["rocker_switch"]  # universal push button verified on FSB14
+    fhk = catalog.device_type_info(catalog.identify(b"\x04\x18\x10\x00", 2), 128)
+    assert fhk["group_by_function"]["61"] == 1 and fhk["group_by_function"]["67"] == 2
+    assert catalog.sender_type_for_function(35) == "motion"
+
+
+def test_single_button_numbering_matches_hardware():
+    from custom_components.eltako_bus_config.protocol import RadioTelegram
+
+    sid = bytes.fromhex("fece5eae")
+    # measured on FSB14: left top -> key 1, right top -> key 3
+    assert RadioTelegram(sid, 0x05, b"\x30", 0x30).button == 1
+    assert RadioTelegram(sid, 0x05, b"\x70", 0x30).button == 3
+    assert RadioTelegram(sid, 0x05, b"\x10", 0x30).button == 2
+    assert RadioTelegram(sid, 0x05, b"\x50", 0x30).button == 4
+    assert RadioTelegram(sid, 0x05, b"\x00", 0x20).button is None

@@ -260,6 +260,19 @@ class RadioTelegram:
         return key, direction
 
     @property
+    def button(self) -> int | None:
+        """Single button as stored in an ID table key byte (PCT14 'Einzeltaste').
+
+        Verified on hardware (FSB14, universal push button): left top = 1, right top = 3.
+        Left bottom = 2 and right bottom = 4 follow the same numbering.
+        """
+        rocker = self.rocker
+        if rocker is None:
+            return None
+        key, direction = rocker
+        return (1 if key == 5 else 3) + (0 if direction == "oben" else 1)
+
+    @property
     def window_handle(self) -> bool:
         """F6-10-00 window handle: T21 set, NU cleared, typical values C0/E0/F0/D0."""
         return self.org == ORG_RPS and not (self.status & 0x10) and self.data[0] in (0xC0, 0xD0, 0xE0, 0xF0)

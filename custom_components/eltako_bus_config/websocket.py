@@ -63,6 +63,7 @@ async def _info(hass, connection, msg, manager: BusManager):
         "key_functions": {str(k): v for k, v in catalog.KEY_FUNCTIONS.items()},
         "key_labels": {str(k): v for k, v in catalog.KEY_LABELS.items()},
         "eep_functions": catalog.EEP_FUNCTION,
+        "sender_types": catalog.SENDER_TYPES,
     }
 
 
@@ -106,7 +107,11 @@ async def _senders_list(hass, connection, msg, manager: BusManager):
 
 
 async def _senders_update(hass, connection, msg, manager: BusManager):
-    return manager.senders.update(msg["sender_id"], name=msg.get("name"), hidden=msg.get("hidden"))
+    entry = manager.senders.update(msg["sender_id"], name=msg.get("name"), hidden=msg.get("hidden"),
+                                   sender_type=msg.get("sender_type"))
+    if msg.get("sender_type") == "":
+        manager.register_known_senders()  # re-detect from device memory
+    return entry
 
 
 async def _senders_delete(hass, connection, msg, manager: BusManager):
@@ -185,6 +190,7 @@ COMMANDS = [
             vol.Required("sender_id"): _SENDER_ID,
             vol.Optional("name"): vol.All(str, vol.Length(max=80)),
             vol.Optional("hidden"): bool,
+            vol.Optional("sender_type"): vol.Any("", vol.In(list(catalog.SENDER_TYPES))),
         },
         _senders_update,
     ),

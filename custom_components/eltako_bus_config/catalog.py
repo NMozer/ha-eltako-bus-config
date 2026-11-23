@@ -251,6 +251,10 @@ KEY_FUNCTIONS: dict[int, str] = {
 
 KEY_LABELS: dict[int, str] = {
     0: "– (4BS / Controller)",
+    1: "Einzeltaste links oben",  # verified on hardware (FSB14, universal push button)
+    2: "Einzeltaste links unten",
+    3: "Einzeltaste rechts oben",  # verified on hardware (FSB14, universal push button)
+    4: "Einzeltaste rechts unten",
     5: "Wippe links",
     6: "Wippe rechts",
 }
@@ -292,4 +296,135 @@ def device_type_info(dt: DeviceType, memory_size: int) -> dict:
         "row_notes": {str(k): v for k, v in dt.row_notes.items()},
         "base_id_row": dt.base_id_row,
         "suggest": SUGGESTED_FUNCTION.get(dt.key, {}),
+        "functions_by_sender": _FUNCS.get(family(dt.key) or "", {}),
+        "group_by_function": {str(k): v for k, v in _GROUP_BY_FUNCTION.get(family(dt.key) or "", {}).items()},
     }
+
+
+# --------------------------------------------------------------------------
+# Sender types (what kind of device sends a telegram)
+# --------------------------------------------------------------------------
+
+SENDER_TYPES: dict[str, dict] = {
+    "rocker_switch": {"label": "Wandtaster", "eep": "F6-02-01", "controls": "rocker",
+                      "examples": "FT55, F4T55E, PTM210"},
+    "window_handle": {"label": "Fenstergriff", "eep": "F6-10-00", "controls": "sensor", "examples": "FTKE, FFG7B"},
+    "contact": {"label": "Fenster-/Türkontakt", "eep": "D5-00-01", "controls": "sensor", "examples": "FTK, FFTE"},
+    "motion": {"label": "Bewegungsmelder", "eep": "A5-07-01", "controls": "sensor", "examples": "FBH (A5-07-01)"},
+    "motion_light": {"label": "Bewegung + Helligkeit", "eep": "A5-08-01", "controls": "sensor",
+                     "examples": "FBH65, FABH65S"},
+    "light_sensor": {"label": "Helligkeitssensor", "eep": "A5-06-01/02/03", "controls": "sensor",
+                     "examples": "FAH60, FHD60SB"},
+    "temp_humidity": {"label": "Temperatur-/Feuchtesensor", "eep": "A5-04-02, A5-10-02/03", "controls": "sensor",
+                      "examples": "FLGTF, FFT60"},
+    "room_controller": {"label": "Raumregler", "eep": "A5-10-06, A5-10-12", "controls": "sensor",
+                        "examples": "FUTH, FTR55D"},
+    "weather": {"label": "Wetterstation", "eep": "A5-13-01", "controls": "sensor", "examples": "FWS61, FWG14MS"},
+    "water": {"label": "Wassermelder", "eep": "F6-05-01", "controls": "sensor", "examples": "FWS81"},
+    "smoke": {"label": "Rauchmelder", "eep": "F6-05-02", "controls": "sensor", "examples": "FRW"},
+    "controller": {"label": "Controller / Home Assistant", "eep": "", "controls": "controller",
+                   "examples": "00-00-B0-xx, Gateway-Basis-ID"},
+    "unknown": {"label": "Unbekannt", "eep": "", "controls": "sensor", "examples": ""},
+}
+
+EEP_SENDER_TYPE: dict[str, str] = {
+    "F6-02-01": "rocker_switch", "F6-02-02": "rocker_switch", "F6-10-00": "window_handle", "D5-00-01": "contact",
+    "A5-07-01": "motion", "A5-08-01": "motion_light",
+    "A5-06-01": "light_sensor", "A5-06-02": "light_sensor", "A5-06-03": "light_sensor",
+    "A5-04-02": "temp_humidity", "A5-04-03": "temp_humidity", "A5-10-02": "temp_humidity",
+    "A5-10-03": "temp_humidity", "A5-02-05": "temp_humidity",
+    "A5-10-06": "room_controller", "A5-10-12": "room_controller",
+    "A5-13-01": "weather", "A5-14-01": "contact", "A5-14-03": "contact",
+    "A5-14-09": "window_handle", "A5-14-0A": "window_handle",
+    "F6-05-01": "water", "F6-05-02": "smoke",
+}
+
+
+def _ids(*parts) -> list[int]:
+    out: list[int] = []
+    for p in parts:
+        out.extend(range(p[0], p[1] + 1) if isinstance(p, tuple) else [p])
+    return out
+
+
+# Function number found in an ID table -> sender type of that entry
+FUNCTION_SENDER_TYPE: dict[int, str] = {
+    **{f: "rocker_switch" for f in _ids((1, 14), 19, (21, 24), 29, 30, 77, 78, 80, (82, 84), (98, 105), 123)},
+    **{f: "contact" for f in _ids((16, 18), 162, 163)},
+    **{f: "window_handle" for f in _ids((25, 27), 120, 121, (124, 127))},
+    **{f: "motion_light" for f in (33, 34, 54)},
+    35: "motion",
+    **{f: "light_sensor" for f in _ids((36, 39), 44, 103, 104, 157, 158)},
+    42: "weather", 48: "water", 49: "water", 50: "smoke",
+    **{f: "controller" for f in (31, 32, 51, 65, 128)},
+    **{f: "room_controller" for f in (61, 62, 63, 64, 149)},
+    **{f: "temp_humidity" for f in _ids(66, (67, 71), 139)},
+}
+
+_FAM_FSR = ("FSR14_1x", "FSR14_2x", "FSR14_4x", "FSR14M_2x", "F4SR14_LED")
+_FAM_DIM = ("FUD14", "FUD14_800W", "FSG14_1_10V", "FDG14", "FD2G14")
+_FAM_HEAT = ("FAE14SSR", "FHK14", "F4HK14")
+
+# Plausible functions per actuator family and sender type (first = default).
+# Compiled from PCT14 function names; not every combination is hardware-tested.
+_FUNCS: dict[str, dict[str, list[int]]] = {
+    "FSR": {
+        "rocker_switch": [2, 3, 1, 4, 5, 11, 23, 24, 6, 7, 21, 22, 77, 78, 159, 160],
+        "window_handle": [25, 26, 27, 120, 121, 124, 125, 126, 127],
+        "contact": [16, 17, 18, 162, 163],
+        "motion": [35],
+        "motion_light": [33, 34],
+        "light_sensor": [36, 37, 103, 104, 157, 158],
+        "water": [48, 49], "smoke": [50],
+        "controller": [51],
+    },
+    "FSB": {
+        "rocker_switch": [2, 1, 12, 14, 19, 82, 83, 84, 80, 102, 98, 99, 100, 101, 123],
+        "window_handle": [25, 26, 27, 120, 121, 124, 125, 126, 127],
+        "contact": [16, 17, 18, 162, 163],
+        "light_sensor": [39],
+        "weather": [42],
+        "controller": [31, 128],
+    },
+    "DIM": {
+        "rocker_switch": [2, 3, 1, 4, 5, 6, 7, 8, 10, 11, 47, 53],
+        "contact": [16, 17, 18],
+        "motion": [35],
+        "motion_light": [33, 34, 54],
+        "light_sensor": [36, 38, 44, 157, 158],
+        "controller": [32],
+    },
+    "HEAT": {
+        "room_controller": [61, 62, 63, 64, 149],
+        "temp_humidity": [67, 68, 69, 70, 71, 66, 139],
+        "window_handle": [25, 26, 27, 120, 121],
+        "contact": [16, 17, 18],
+        "controller": [65],
+    },
+    "FMZ": {"rocker_switch": [1, 2, 3]},
+}
+
+# Function -> function group number, where it depends on the function (FHK family)
+_GROUP_BY_FUNCTION: dict[str, dict[int, int]] = {
+    "HEAT": {**{f: 1 for f in (61, 62, 63, 64, 149)},
+             **{f: 2 for f in (66, 67, 68, 69, 70, 71, 139)},
+             65: 3},
+}
+
+
+def family(dt_key: str) -> str | None:
+    if dt_key in _FAM_FSR:
+        return "FSR"
+    if dt_key in _FAM_DIM:
+        return "DIM"
+    if dt_key in _FAM_HEAT:
+        return "HEAT"
+    if dt_key == "FSB14":
+        return "FSB"
+    if dt_key == "FMZ14":
+        return "FMZ"
+    return None
+
+
+def sender_type_for_function(fn: int) -> str | None:
+    return FUNCTION_SENDER_TYPE.get(fn)
