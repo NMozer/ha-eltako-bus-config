@@ -16,8 +16,11 @@
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/NMozer/ha-eltako-bus-config/issues",
   "requirements": [
-    "pyserial>=3.5",
     "pyserial-asyncio-fast>=0.11"
+  ],
+  "categories": [
+    "configurator",
+    "hub"
   ],
   "single_config_entry": true,
   "version": "0.6.0"
