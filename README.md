@@ -17,19 +17,22 @@ Eine Home-Assistant-Integration zum Konfigurieren von Eltako-Reiheneinbaugeräte
 | Gerät identifizieren | **Blinken** |
 | Projekt sichern / zurückspielen | Reiter **Sicherungen**: anlegen, herunterladen (JSON), importieren, vergleichen, wiederherstellen |
 
-Die Gerätesteuerung (Licht, Rollläden, Heizung …) bleibt bei der [Eltako-Integration von grimmpp](https://github.com/grimmpp/home-assistant-eltako). Beide Integrationen ergänzen sich.
+Die Gerätesteuerung (Licht, Rollläden, Heizung …) übernimmt weiterhin eine Steuer-Integration, zum Beispiel die [Eltako-Integration von grimmpp](https://github.com/grimmpp/home-assistant-eltako). Der Bus-Konfigurator ändert nur die Konfiguration der Geräte und ergänzt sie.
 
-## Hardware
+## Anschluss
+
+Die Integration braucht eine serielle Verbindung zum Bus. Möglich sind:
+
+* **FAM14 per Mini-USB (empfohlen).** Über diesen Weg arbeitet auch PCT14, und eo_man liest den Gerätespeicher ebenfalls nur so aus.
+* **FGW14-USB (experimentell).** Eltako dokumentiert nicht, ob der FGW14-USB in Pos. 6 Speicher-Lese- und Schreibbefehle (ORG F0/F1/F2/F4) weiterreicht. Unter **Verbindung → Verbindung testen** siehst du, ob es klappt.
+* **Direkter RS485-Adapter** am Bus (9600 Baud).
+
+Eine Schnittstelle kann immer nur ein Programm nutzen. Nutzt deine Steuer-Integration bereits ein Gateway (z. B. FGW14-USB) oder einen Funkstick, schließe für den Bus-Konfigurator den FAM14 zusätzlich per Mini-USB an:
 
 ```
-HA-Rechner ──USB──► FGW14-USB ──┐
-           └─USB──► FAM14 ──────┴── RS485-Bus ── FSR14, FSB14, FUD14 …
-                    (Mini-USB)
+HA-Rechner ──USB──► Gateway der Steuer-Integration ──┐
+           └─USB──► FAM14 (Mini-USB) ────────────────┴── RS485-Bus ── Aktoren
 ```
-
-* **FAM14 per Mini-USB (empfohlen).** Über diesen Weg arbeitet auch PCT14, und eo_man liest den Gerätespeicher ebenfalls nur so aus. Schließe also zusätzlich zum FGW14-USB den FAM14 per Mini-USB an den HA-Rechner an. Die grimmpp-Integration nutzt weiter den FGW14-USB, diese Integration den FAM14. So belegen sie unterschiedliche Schnittstellen.
-* **FGW14-USB (experimentell).** Eltako dokumentiert nicht, ob der FGW14-USB in Pos. 6 Speicher-Lese- und Schreibbefehle (ORG F0/F1/F2/F4) weiterreicht. Unter **Verbindung → Verbindung testen** siehst du, ob es bei dir klappt. Beide Integrationen dürfen sich nicht dieselbe Schnittstelle teilen.
-* **Direkter RS485-Adapter** am Bus (9600 Baud) wird ebenfalls angeboten.
 
 PCT14 und diese Integration dürfen nicht gleichzeitig auf den FAM14 zugreifen.
 
@@ -50,8 +53,6 @@ Danach: *Einstellungen → Geräte & Dienste → Integration hinzufügen → „
 
 Voraussetzung: Home Assistant 2025.1 oder neuer.
 
-**Umstieg vom früheren Namen „Eltako PCT“ (`eltako_pct`):** Neue Integration einrichten, dann die alte unter *Geräte & Dienste* löschen und den Ordner `custom_components/eltako_pct` entfernen. Sicherungen und vergebene Sendernamen übernimmt die neue Integration beim ersten Start automatisch.
-
 ## Lernmodus (Einlernen)
 
 1. **Einlernen → Lauschen starten.** Der Bus bleibt dabei frei – der FAM14 gibt Funktelegramme nur im normalen Betrieb an seinen USB-Port weiter (bei gesperrtem Bus kommt nichts an).
@@ -69,18 +70,18 @@ Im Lernmodus bekommt jede **DALI-Gruppe** (0–15) eine eigene, benennbare Kache
 
 Jeder Sender bekommt einen Typ (Wandtaster, Fenstergriff, Kontakt, Bewegungsmelder, Helligkeits-, Temperatur-/Feuchtesensor, Raumregler, Wetterstation, Wasser-/Rauchmelder, Controller/Home Assistant). Erkannt wird er – in dieser Rangfolge – von dir gewählt › aus dem Lerntelegramm (EEP) › aus der Funktion im Gerätespeicher › aus dem Telegrammmuster. Beim Zuordnen schlägt die Integration nur passende Funktionen vor („Alle Funktionen“ bleibt wählbar) und legt den Eintrag in der richtigen Funktionsgruppe ab (z. B. Raumregler/Sensor/Kontakt beim FHK14).
 
-**Kanäle benennen:** Im Lernmodus trägst du den Namen direkt in der Kanal-Kachel ein (z. B. „Kinderzimmer West“); ist dort ein benannter Home-Assistant-Sender eingelernt, bietet die Kachel dessen Namen zur Übernahme an. Die Namen erscheinen auch in der ID-Tabelle und bei „Eingelernt“.
+**Kanäle benennen:** Im Lernmodus trägst du den Namen direkt in der Kanal-Kachel ein (z. B. „Wohnzimmer links“); ist dort ein benannter Home-Assistant-Sender eingelernt, bietet die Kachel dessen Namen zur Übernahme an. Die Namen erscheinen auch in der ID-Tabelle und bei „Eingelernt“.
 
 **Schnellwahl:** Im Zuordnen-Dialog stehen die wichtigsten Funktionen als Knöpfe bereit – beim FSB14 z. B. Richtungstaster und Zentral Auf/Ab für Wippen, Universaltaster sowie Zentral Auf, Ab und Stopp für Einzeltasten; bei Schalt- und Dimmaktoren Zentral Ein/Aus.
 
-Wandtaster lassen sich **als Wippe** (Richtungstaster, Taste 5/6) oder **als Einzeltasten** zuordnen. Speicherwerte der Einzeltasten: 1 = links oben, 2 = links unten, 3 = rechts oben, 4 = rechts unten (1 und 3 an einem FSB14 gemessen).
+Wandtaster lassen sich **als Wippe** (Richtungstaster, Taste 5/6) oder **als Einzeltasten** zuordnen. Speicherwerte der Einzeltasten: 1 = links oben, 2 = links unten, 3 = rechts oben, 4 = rechts unten (1 und 3 an realer Hardware bestätigt, 2 und 4 abgeleitet).
 
 ## Typischer Ablauf
 
 1. **Sicherungen → Neue Sicherung.** Damit sicherst du den Ist-Stand des ganzen Busses.
 2. **Geräte → Bus scannen.** Der Scan prüft alle 254 Adressen und dauert je nach Busgröße 1–3 Minuten.
 3. Gerät auswählen → **ID-Tabelle** → „+ Eintrag“ oder „Bearbeiten“.
-   * Für einen **Home-Assistant-Sender** (grimmpp) trägst du dessen Sender-ID ein. Das ist meist Basis-ID + n; das Panel markiert solche IDs. Als Funktion wählst du die passende „… vom Controller (GFVS)“-Funktion: 51 für FSR14, 31 für FSB14, 32 für FUD14, 65 für FHK14/FAE14.
+   * Für einen **Home-Assistant-Sender** (aus deiner Steuer-Integration) trägst du dessen Sender-ID ein. Das ist meist Basis-ID + n; das Panel markiert solche IDs. Als Funktion wählst du die passende „… vom Controller (GFVS)“-Funktion: 51 für FSR14, 31 für FSB14, 32 für FUD14, 65 für FHK14/FAE14.
    * Für einen **Wandtaster** klickst du auf „Sender erfassen“, drückst den Taster und übernimmst die ID – oder du nutzt gleich den **Lernmodus**.
 4. Unten auf **Auf Gerät schreiben**. Die Integration
    * sperrt den Bus,
@@ -107,7 +108,7 @@ Beim Wiederherstellen prüft die Integration für jedes Gerät, ob Adresse, Ger�
 * **Geräteeinstellungen** (Zeilen 0–7 wie Verzögerungen oder Betriebsarten) sind herstellerspezifisch und nicht öffentlich dokumentiert. Sie erscheinen als Hex-Zeilen; nur die bekannten Felder sind beschriftet. Für Änderungen dort ist eine PCT14-Sicherung als Vorlage am sichersten.
 * **Busadressen vergeben** (Drehschalter Pos. 10 / „Adresse vergeben“) ist noch nicht eingebaut.
 * Unterstützte Gerätetypen mit ID-Tabelle: FSR14-1x/2x/4x, FSR14M-2x, F4SR14-LED, FSB14, FUD14, FUD14/800W, FSG14/1-10V, FDG14, FD2G14, FAE14SSR, FHK14, F4HK14, FMZ14, FTD14. Andere Geräte (FSU14, FMSR14, F3Z14D, FWZ14 …) werden erkannt und als Rohspeicher angezeigt.
-* Getestet gegen einen simulierten Bus, byte-genau gegen die Referenzbibliothek `eltako14bus` und an einer echten Anlage (FAM14, 2× FSB14, FWZ14-65A). Lege vor dem ersten Schreiben trotzdem eine Sicherung an.
+* Getestet gegen einen simulierten Bus, byte-genau gegen die Referenzbibliothek `eltako14bus` und an realer Hardware (Scan, Lesen, Schreiben mit Kontrolle, Lauschen). Lege vor dem ersten Schreiben trotzdem eine Sicherung an.
 * Lauschen funktioniert nur bei freiem Bus: Mit gesperrtem Bus gibt der FAM14 keine Funktelegramme an den USB-Port weiter.
 
 ## Entwicklung

@@ -128,11 +128,11 @@ async def test_migrates_backups_and_sender_names_from_eltako_pct(hass: HomeAssis
     storage.mkdir(exist_ok=True)
     (storage / "eltako_pct.senders.OLDENTRY").write_text(json.dumps(
         {"version": 1, "key": "eltako_pct.senders.OLDENTRY",
-         "data": {"senders": [{"id": "FE-CE-5E-AE", "name": "Testtaster", "kind": "rocker", "keys": [5, 6], "count": 4}]}}
+         "data": {"senders": [{"id": "FE-AB-CD-01", "name": "Testtaster", "kind": "rocker", "keys": [5, 6], "count": 4}]}}
     ))
     entry = await _setup(hass)
     manager = entry.runtime_data
-    assert manager.senders.senders["FE-CE-5E-AE"]["name"] == "Testtaster"
+    assert manager.senders.senders["FE-AB-CD-01"]["name"] == "Testtaster"
     ids = [b["id"] for b in await manager.backups.list()]
     assert "backup-old" in ids
     # old-format backups stay usable

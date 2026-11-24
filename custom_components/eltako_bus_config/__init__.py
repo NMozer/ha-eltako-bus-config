@@ -2,7 +2,7 @@
 
 Covers the core functions of the Eltako PCT14 Windows tool: bus scan,
 reading and writing device memory (ID tables and settings), backup and
-restore. Device control stays with the Eltako integration (grimmpp).
+restore. Device control stays with a separate control integration.
 """
 
 from __future__ import annotations

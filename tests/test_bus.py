@@ -215,7 +215,7 @@ def test_groups_follow_memory_size():
 def test_rocker_and_eep_decoding():
     from custom_components.eltako_bus_config.protocol import RadioTelegram
 
-    sid = bytes.fromhex("fef4e77c")
+    sid = bytes.fromhex("fe123456")
     assert RadioTelegram(sid, 0x05, b"\x30", 0x30).rocker == (5, "oben")
     assert RadioTelegram(sid, 0x05, b"\x10", 0x30).rocker == (5, "unten")
     assert RadioTelegram(sid, 0x05, b"\x70", 0x30).rocker == (6, "oben")
@@ -245,9 +245,9 @@ async def test_listen_stores_named_senders_and_can_be_stopped(tmp_path):
 
     async def inject_then_stop():
         await asyncio.sleep(0.3)
-        sim.inject_radio(0x05, b"\x30", bytes.fromhex("fef4e77c"))
-        sim.inject_radio(0x05, b"\x00", bytes.fromhex("fef4e77c"), status=0x20)
-        sim.inject_radio(0x05, b"\x70", bytes.fromhex("fef4e77c"))
+        sim.inject_radio(0x05, b"\x30", bytes.fromhex("fe123456"))
+        sim.inject_radio(0x05, b"\x00", bytes.fromhex("fe123456"), status=0x20)
+        sim.inject_radio(0x05, b"\x70", bytes.fromhex("fe123456"))
         sim.inject_radio(0x05, b"\x10", bytes.fromhex("0000b001"))
         await asyncio.sleep(0.2)
         assert manager.stop_listening()
@@ -258,9 +258,9 @@ async def test_listen_stores_named_senders_and_can_be_stopped(tmp_path):
     await task
     assert asyncio.get_running_loop().time() - started < 5  # stopped early
     by_id = {s["id"]: s for s in manager.senders.list()}
-    assert by_id["FE-F4-E7-7C"]["kind"] == "rocker" and by_id["FE-F4-E7-7C"]["keys"] == [5, 6]
+    assert by_id["FE-12-34-56"]["kind"] == "rocker" and by_id["FE-12-34-56"]["keys"] == [5, 6]
     assert by_id["00-00-B0-01"]["kind"] == "bus_sender"
-    manager.senders.update("FE-F4-E7-7C", name="Taster Schlafzimmer")
+    manager.senders.update("FE-12-34-56", name="Taster Flur")
     # persisted and reloadable
     from custom_components.eltako_bus_config.senders import SenderStore
 
@@ -269,7 +269,7 @@ async def test_listen_stores_named_senders_and_can_be_stopped(tmp_path):
 
     again = SenderStore(load, lambda d: None)
     await again.async_load()
-    assert again.senders["FE-F4-E7-7C"]["name"] == "Taster Schlafzimmer"
+    assert again.senders["FE-12-34-56"]["name"] == "Taster Flur"
     assert manager.senders.clear_unnamed() == 1
 
 
@@ -289,14 +289,14 @@ def test_sender_type_detection_and_priority():
         return None
 
     st = SenderStore(load, lambda d: None)
-    sid = bytes.fromhex("fece5eae")
+    sid = bytes.fromhex("feabcd01")
     e = st.observe(RadioTelegram(sid, 0x05, b"\x30", 0x30))
     assert (e["type"], e["type_source"]) == ("rocker_switch", "pattern")
     # memory says it is used as a window contact -> memory beats pattern
-    st.add_known("FE-CE-5E-AE", function=16)
+    st.add_known("FE-AB-CD-01", function=16)
     assert (e["type"], e["type_source"]) == ("contact", "memory")
     # manual beats everything, and stays when new telegrams arrive
-    st.update("FE-CE-5E-AE", sender_type="rocker_switch")
+    st.update("FE-AB-CD-01", sender_type="rocker_switch")
     st.observe(RadioTelegram(sid, 0x05, b"\x10", 0x30))
     assert (e["type"], e["type_source"]) == ("rocker_switch", "manual")
     # 4BS teach-in with EEP A5-07-01 -> motion detector
@@ -319,7 +319,7 @@ def test_function_lists_and_groups():
 def test_single_button_numbering_matches_hardware():
     from custom_components.eltako_bus_config.protocol import RadioTelegram
 
-    sid = bytes.fromhex("fece5eae")
+    sid = bytes.fromhex("feabcd01")
     # measured on FSB14: left top -> key 1, right top -> key 3
     assert RadioTelegram(sid, 0x05, b"\x30", 0x30).button == 1
     assert RadioTelegram(sid, 0x05, b"\x70", 0x30).button == 3
@@ -337,12 +337,12 @@ async def test_channel_names_persist():
         return saved.get("d")
 
     st = SenderStore(load, lambda d: saved.__setitem__("d", d))
-    st.rename_channel(4, "  Kinderzimmer West ")
-    st.rename_channel(3, "Süd")
+    st.rename_channel(4, "  Wohnzimmer links ")
+    st.rename_channel(3, "Küche")
     st.rename_channel(3, "")
     again = SenderStore(load, lambda d: None)
     await again.async_load()
-    assert again.channels == {"4": "Kinderzimmer West"}
+    assert again.channels == {"4": "Wohnzimmer links"}
 
 
 def test_fsb_quick_functions_and_labels():
