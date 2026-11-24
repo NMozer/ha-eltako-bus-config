@@ -9,7 +9,7 @@ import contextlib
 import logging
 import time
 
-from .protocol import Frame, FrameReader, is_timeout
+from .protocol import HSEQ_TRT, Frame, FrameReader, is_timeout
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -141,8 +141,8 @@ class BusTransport:
                     _LOGGER.exception("Listener failed")
 
     def _is_echo(self, frame: Frame) -> bool:
-        if not frame.is_request:
-            return False  # devices only answer with responses; requests seen on RX are our own echo
+        if not (frame.is_request or frame.hseq == HSEQ_TRT):
+            return False  # devices only answer with responses; our requests seen on RX are our own echo
         now = time.monotonic()
         while self._pending_echo and self._pending_echo[0][0] < now - 2:
             self._pending_echo.popleft()

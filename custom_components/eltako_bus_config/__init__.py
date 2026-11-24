@@ -20,6 +20,7 @@ from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.typing import ConfigType
 
+from .bridge import BridgeHub
 from .const import (
     CONF_BAUDRATE,
     CONF_GATEWAY,
@@ -27,6 +28,8 @@ from .const import (
     CONF_SCAN_TIMEOUT,
     DEFAULT_SCAN_TIMEOUT,
     DOMAIN,
+    GATEWAY_BRIDGE,
+    GATEWAY_FAM14,
     GATEWAYS,
     PANEL_COMPONENT,
     PANEL_URL,
@@ -38,7 +41,8 @@ from .const import (
 )
 from .manager import BackupStore, BusManager
 from .senders import SenderStore
-from .transport import BusTransport, serial_connector
+from .sites import NO_FAM, SiteStore
+from .transport import BusTransport, TransportError, serial_connector
 from .websocket import async_register_websocket
 
 _LOGGER = logging.getLogger(__name__)
@@ -52,17 +56,34 @@ PANEL_FILE = "eltako-bus-config-panel.js"
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
+    hass.data.setdefault(DOMAIN, {})["bridge"] = BridgeHub()
     async_register_websocket(hass)
     return True
+
+
+def get_bridge(hass: HomeAssistant) -> BridgeHub:
+    return hass.data.setdefault(DOMAIN, {}).setdefault("bridge", BridgeHub())
+
+
+async def _no_connection():
+    raise TransportError(
+        "Kein Bus verbunden: Laptop per USB an den FAM14 anschließen und im Panel „Laptop verbinden“ wählen"
+    )
 
 
 def build_manager(hass: HomeAssistant, entry: ConfigEntry, store: Store) -> BusManager:
     gateway = entry.data[CONF_GATEWAY]
     gw = GATEWAYS[gateway]
-    port = entry.data[CONF_PORT]
+    port = entry.data.get(CONF_PORT) or ""
     baudrate = entry.options.get(CONF_BAUDRATE, entry.data.get(CONF_BAUDRATE, gw["baudrate"]))
+    bridge = get_bridge(hass)
 
     def transport_factory() -> BusTransport:
+        # A laptop plugged into a FAM14 always wins: that is the bus the user is standing at.
+        if bridge.attached:
+            return BusTransport(bridge.connect, send_delay=GATEWAYS[GATEWAY_FAM14]["send_delay"])
+        if gateway == GATEWAY_BRIDGE or not port:
+            return BusTransport(_no_connection, send_delay=0)
         return BusTransport(serial_connector(port, int(baudrate)), send_delay=gw["send_delay"])
 
     @callback
@@ -76,6 +97,8 @@ def build_manager(hass: HomeAssistant, entry: ConfigEntry, store: Store) -> BusM
 
     sender_store: Store = Store(hass, STORAGE_VERSION, f"{DOMAIN}.senders.{entry.entry_id}")
     senders = SenderStore(sender_store.async_load, lambda data: sender_store.async_delay_save(lambda: data, 5))
+    site_store: Store = Store(hass, STORAGE_VERSION, f"{DOMAIN}.sites.{entry.entry_id}")
+    sites = SiteStore(site_store.async_load, lambda data: site_store.async_delay_save(lambda: data, 2))
 
     manager = BusManager(
         transport_factory,
@@ -84,7 +107,10 @@ def build_manager(hass: HomeAssistant, entry: ConfigEntry, store: Store) -> BusM
         progress=progress,
         on_devices_changed=persist,
         senders=senders,
+        sites=sites,
+        bridge=bridge,
     )
+    manager.fixed_port = bool(port) and gateway != GATEWAY_BRIDGE
     return manager
 
 
@@ -93,6 +119,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: EltakoPctConfigEntry) ->
     manager = build_manager(hass, entry, store)
     manager.import_cache(await store.async_load())
     await manager.senders.async_load()
+    await manager.sites.async_load()
+    _migrate_to_sites(manager)
     await _async_migrate_from_eltako_pct(hass, manager)
     manager.register_known_senders()
     entry.runtime_data = manager
@@ -100,6 +128,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: EltakoPctConfigEntry) ->
     await _async_register_panel(hass)
     entry.async_on_unload(entry.add_update_listener(_async_reload))
     return True
+
+
+def _migrate_to_sites(manager: BusManager) -> None:
+    """Versions before 0.7 kept one bus only: turn it into the first installation."""
+    sites = manager.sites
+    if not sites.sites and manager.devices:
+        site_id = manager.base_id or NO_FAM
+        sites.ensure(site_id)
+        sites.store_devices(site_id, manager._devices_payload(), manager.last_scan)
+        if manager.senders and manager.senders.channels:
+            sites.sites[site_id]["channels"].update(manager.senders.channels)
+        sites.active = site_id
+        sites.persist()
+        _LOGGER.info("Bus data migrated to installation %s", site_id)
+    if sites.active is None and sites.sites:
+        sites.active = next(iter(sites.sites))
+    if sites.active:
+        manager.load_site(sites.active)
 
 
 OLD_DOMAIN = "eltako_pct"

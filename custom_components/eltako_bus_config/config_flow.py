@@ -26,6 +26,7 @@ from .const import (
     CONF_SCAN_TIMEOUT,
     DEFAULT_SCAN_TIMEOUT,
     DOMAIN,
+    GATEWAY_BRIDGE,
     GATEWAY_FAM14,
     GATEWAYS,
 )
@@ -68,23 +69,31 @@ class EltakoPctConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         errors: dict[str, str] = {}
         if user_input is not None:
-            baudrate = GATEWAYS[user_input[CONF_GATEWAY]]["baudrate"]
-            try:
-                await _test_port(user_input[CONF_PORT], baudrate)
-            except TransportError:
-                errors["base"] = "cannot_connect"
+            gateway = user_input[CONF_GATEWAY]
+            baudrate = GATEWAYS[gateway]["baudrate"]
+            port = (user_input.get(CONF_PORT) or "").strip()
+            if gateway == GATEWAY_BRIDGE:
+                port = ""
+            elif not port:
+                errors[CONF_PORT] = "port_required"
             else:
+                try:
+                    await _test_port(port, baudrate)
+                except TransportError:
+                    errors["base"] = "cannot_connect"
+            if not errors:
                 await self.async_set_unique_id(DOMAIN)
                 self._abort_if_unique_id_configured()
+                title = "Laptop-Brücke" if not port else port.rsplit("/", 1)[-1]
                 return self.async_create_entry(
-                    title=f"Bus-Konfigurator für Eltako ({user_input[CONF_PORT].rsplit('/', 1)[-1]})",
-                    data={**user_input, CONF_BAUDRATE: baudrate},
+                    title=f"Bus-Konfigurator für Eltako ({title})",
+                    data={CONF_PORT: port, CONF_GATEWAY: gateway, CONF_BAUDRATE: baudrate},
                 )
 
         ports = await self.hass.async_add_executor_job(_list_ports)
         schema = vol.Schema(
             {
-                vol.Required(CONF_PORT): SelectSelector(
+                vol.Optional(CONF_PORT): SelectSelector(
                     SelectSelectorConfig(options=ports, custom_value=True, mode=SelectSelectorMode.DROPDOWN)
                 ),
                 vol.Required(CONF_GATEWAY, default=GATEWAY_FAM14): SelectSelector(

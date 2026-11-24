@@ -3,19 +3,20 @@
     "step": {
       "user": {
         "title": "Connect Eltako bus",
-        "description": "Choose the serial port used to read and write the memory of Series 14 devices. The FAM14 mini USB port is recommended – just like PCT14.",
+        "description": "Choose how Home Assistant reaches the bus. Fixed connection: the Mini-USB port of a FAM14 attached to the HA host – just like PCT14. Without a fixed connection you plug a laptop into the FAM14 you want to configure and connect it in the panel (\"laptop bridge\", requires HTTPS).",
         "data": {
           "port": "Serial port",
           "gateway": "Gateway"
         },
         "data_description": {
-          "port": "Prefer the stable path under /dev/serial/by-id.",
+          "port": "Preferably the stable path below /dev/serial/by-id. Leave empty for \"laptop bridge only\".",
           "gateway": "FGW14-USB mode is experimental – verify it with 'Test connection' in the panel."
         }
       }
     },
     "error": {
-      "cannot_connect": "The serial port could not be opened (in use or missing?)."
+      "cannot_connect": "The serial port could not be opened (in use or missing?).",
+      "port_required": "Please choose a port – or \"laptop bridge only\"."
     },
     "abort": {
       "already_configured": "Already configured.",
@@ -41,7 +42,8 @@
       "options": {
         "fam14": "FAM14 (mini USB, recommended)",
         "fgw14usb": "FGW14-USB (experimental)",
-        "rs485": "Direct RS485 adapter on the bus (9600 baud)"
+        "rs485": "Direct RS485 adapter on the bus (9600 baud)",
+        "bridge": "Laptop bridge only (no fixed connection)"
       }
     }
   }

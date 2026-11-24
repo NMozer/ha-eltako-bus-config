@@ -16,6 +16,8 @@ Eine Home-Assistant-Integration zum Konfigurieren von Eltako-Reiheneinbaugeräte
 | Geräteeinstellungen | Reiter **Einstellungen** (Zeilen 0–7, bekannte Bedeutungen annotiert) und **Rohspeicher** |
 | Gerät identifizieren | **Blinken** |
 | Projekt sichern / zurückspielen | Reiter **Sicherungen**: anlegen, herunterladen (JSON), importieren, vergleichen, wiederherstellen |
+| Mehrere FAM14 / Projekte | Reiter **Anlagen**: eine Anlage je FAM14, PCT14-Export importieren, Projektdatei exportieren und importieren |
+| Konfigurieren am Verteiler | **Laptop-Brücke**: Laptop per USB an den FAM14, Home Assistant im Browser öffnen, verbinden |
 
 Die Gerätesteuerung (Licht, Rollläden, Heizung …) übernimmt weiterhin eine Steuer-Integration, zum Beispiel die [Eltako-Integration von grimmpp](https://github.com/grimmpp/home-assistant-eltako). Der Bus-Konfigurator ändert nur die Konfiguration der Geräte und ergänzt sie.
 
@@ -36,6 +38,45 @@ HA-Rechner ──USB──► Gateway der Steuer-Integration ──┐
 
 PCT14 und diese Integration dürfen nicht gleichzeitig auf den FAM14 zugreifen.
 
+**Ohne festen Anschluss:** Bei der Einrichtung „Nur Laptop-Brücke“ wählen. Konfiguriert wird dann über einen Laptop am jeweiligen FAM14 (siehe unten).
+
+## Mehrere FAM14 im Haus (Anlagen)
+
+Jeder FAM14 bildet eine **Anlage**, erkannt an seiner Basis-ID – etwa je eine in der Unterverteilung und im Heizungsverteiler. Alle Anlagen liegen in **einer** Integration: Sendernamen und die Vergabe von Home-Assistant-Sender-IDs gelten hausweit.
+
+* **Anlage wählen:** Auswahlfeld oben im Panel. Eine Anlage, die gerade nicht am Bus hängt, zeigt ihren gespeicherten Stand; Änderungen werden **vorgemerkt** und beim nächsten Anschluss geschrieben.
+* **Schutz:** Vor jedem Lesen und Schreiben prüft die Integration die Basis-ID des angeschlossenen FAM14. Gehört er zu einer anderen Anlage, wird nichts geschrieben.
+* **Neue Anlagen** entstehen beim Bus-Scan, beim Verbinden eines Laptops oder per PCT14-Import.
+* **Projektdatei:** *Anlagen → Projekt exportieren* speichert alle Anlagen, Namen, Sender und vorgemerkten Änderungen in einer JSON-Datei; *Projekt importieren* führt sie wieder zusammen.
+
+### Laptop-Brücke
+
+Für Verteiler ohne festen Anschluss an den HA-Rechner:
+
+1. Laptop per Mini-USB an den FAM14 stecken und Home Assistant **über HTTPS** im Browser öffnen (Chrome, Edge, Opera oder Firefox ab 151).
+2. *Anlagen → Laptop verbinden* und den USB-Anschluss des FAM14 auswählen.
+3. Die Integration liest die Basis-ID, öffnet die passende Anlage (oder legt sie an) und arbeitet wie mit einem fest angeschlossenen FAM14: scannen, lauschen, zuordnen, schreiben.
+
+Der Browser reicht die Daten nur durch – Sicherungen, Namen und Zuordnungen landen direkt in Home Assistant. Web Serial ist nur auf HTTPS-Seiten verfügbar; `http://…:8123` genügt nicht.
+
+### PCT14-Export importieren
+
+*Anlagen → PCT14-Export importieren* legt aus einer PCT14-XML-Datei eine Anlage an (oder aktualisiert die mit gleicher Basis-ID): Geräte, Kanal- und Gerätebeschreibungen, Sendernamen sowie die Liste der Busadressen, deren Zustand der FAM14 per Funk meldet. Ist die Anlage schon vom Bus gelesen, bleibt der Busstand maßgeblich und es werden nur Namen ergänzt.
+
+Die ID-Tabelle wird für den **FSB14** übernommen; die Zuordnung der PCT14-Einträge zu Speicherzeilen ist dort an echter Hardware geprüft. Bei anderen Gerätetypen werden die Einträge vorerst nur angezeigt. Einstellungszeilen (Laufzeiten usw.) enthält ein PCT14-Export nicht.
+
+### Home Assistant per Funkstick
+
+Statt eines USB-Gateways an jedem FAM14 kann Home Assistant alle Anlagen über **einen** Funkstick erreichen (z. B. FAM-USB oder USB300):
+
+* *Anlagen → HA-Sender eintragen:* Basis-ID des Sticks eingeben und Kanäle wählen. Jeder Kanal bekommt die nächste freie Sender-ID (Basis-ID + 1, 2, 3 …) und wird mit der passenden Controller-Funktion in die ID-Tabelle eingetragen – ohne Einlernen am Drehschalter. Die Einträge werden je Anlage vorgemerkt und beim Anschluss geschrieben.
+* Die **Rückmelde-IDs** jeder Anlage (Basis-ID des FAM14 + Busadresse) stehen unter *Anlagen*; sie braucht die Steuer-Integration für die Zustände.
+* Ob der FAM14 Rückmeldungen per Funk sendet, hängt von seiner Betriebsart ab (Drehschalter, siehe Anleitung). Reichweite und Messwerte (z. B. Zähler) vor dem Umstieg prüfen.
+
+### Funktest
+
+*Verbindung → Funktest* legt ein Lerntelegramm (EEP A5-38-08) oder einen Ein-/Aus-Befehl mit frei wählbarer Sender-ID auf den Bus. Damit lässt sich prüfen, ob der FAM14 solche Telegramme in die Luft sendet – etwa mit einem Funkaktor im Lernmodus oder einem mithörenden Funkstick. Der Bus wird dafür nicht gesperrt.
+
 ## Installation
 
 **Marketplace (ab Home Assistant 2026.11, empfohlen – mit automatischen Updates):**
@@ -49,7 +90,7 @@ Neue Versionen werden danach als Update angezeigt.
 
 **Manuell:** Den Ordner `custom_components/eltako_bus_config` nach `<config>/custom_components/eltako_bus_config` kopieren und Home Assistant neu starten.
 
-Danach: *Einstellungen → Geräte & Dienste → Integration hinzufügen → „Bus-Konfigurator für Eltako Baureihe 14“*. Wähle die Schnittstelle (am besten den Pfad unter `/dev/serial/by-id/…`) und als Gateway „FAM14“. Das Panel erscheint nur für Administratoren in der Sidebar.
+Danach: *Einstellungen → Geräte & Dienste → Integration hinzufügen → „Bus-Konfigurator für Eltako Baureihe 14“*. Wähle die Schnittstelle (am besten den Pfad unter `/dev/serial/by-id/…`) und als Gateway „FAM14“ – oder „Nur Laptop-Brücke“ ohne festen Anschluss. Das Panel erscheint nur für Administratoren in der Sidebar.
 
 Voraussetzung: Home Assistant 2025.1 oder neuer.
 
@@ -110,6 +151,8 @@ Beim Wiederherstellen prüft die Integration für jedes Gerät, ob Adresse, Ger�
 * Unterstützte Gerätetypen mit ID-Tabelle: FSR14-1x/2x/4x, FSR14M-2x, F4SR14-LED, FSB14, FUD14, FUD14/800W, FSG14/1-10V, FDG14, FD2G14, FAE14SSR, FHK14, F4HK14, FMZ14, FTD14. Andere Geräte (FSU14, FMSR14, F3Z14D, FWZ14 …) werden erkannt und als Rohspeicher angezeigt.
 * Getestet gegen einen simulierten Bus, byte-genau gegen die Referenzbibliothek `eltako14bus` und an realer Hardware (Scan, Lesen, Schreiben mit Kontrolle, Lauschen). Lege vor dem ersten Schreiben trotzdem eine Sicherung an.
 * Lauschen funktioniert nur bei freiem Bus: Mit gesperrtem Bus gibt der FAM14 keine Funktelegramme an den USB-Port weiter.
+* PCT14-Import: ID-Tabellen werden bisher nur beim FSB14 übernommen (an Hardware geprüft). Für weitere Gerätetypen genügt je ein PCT14-Export plus Bus-Scan derselben Anlage zum Abgleich.
+* Ob der FAM14 Telegramme von Home Assistant (Funktest, Funkstick-Betrieb) in die Luft sendet bzw. Rückmeldungen funkt, hängt von seiner Betriebsart ab und ist vor dem Umstieg an der eigenen Anlage zu prüfen.
 
 ## Entwicklung
 

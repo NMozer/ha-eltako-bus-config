@@ -138,3 +138,46 @@ async def test_migrates_backups_and_sender_names_from_eltako_pct(hass: HomeAssis
     # old-format backups stay usable
     data = await manager.backups.get("backup-old")
     assert manager.diff_backup(data) == []
+
+
+async def test_config_flow_laptop_bridge_only(hass: HomeAssistant, sim):
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {"gateway": "fam14"})
+    assert result["type"] is FlowResultType.FORM and result["errors"] == {"port": "port_required"}
+    with patch("custom_components.eltako_bus_config.async_setup_entry", return_value=True):
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], {"gateway": "bridge"})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"]["port"] == "" and result["data"]["gateway"] == "bridge"
+
+
+async def test_ws_installations_and_bridge(hass: HomeAssistant, hass_ws_client, sim):
+    from pathlib import Path
+
+    entry = await _setup(hass)
+    ws = await hass_ws_client(hass)
+    xml = (Path(__file__).parent / "fixtures" / "pct14_sample.xml").read_text("utf-8")
+    await ws.send_json({"id": 1, "type": f"{DOMAIN}/pct14/import", "xml": xml, "name": "UV OG"})
+    res = await ws.receive_json()
+    assert res["success"], res
+    assert res["result"]["result"]["site"] == "FF-12-34-80"
+    assert [s["name"] for s in res["result"]["sites"]] == ["UV OG"]
+
+    # the browser attaches as serial port; bus traffic now goes through it
+    await ws.send_json({"id": 2, "type": f"{DOMAIN}/bridge/attach", "label": "Test"})
+    assert (await ws.receive_json())["success"]
+    from custom_components.eltako_bus_config import get_bridge
+
+    assert get_bridge(hass).attached and entry.runtime_data.state()["bridge"]
+    await ws.send_json({"id": 3, "type": f"{DOMAIN}/bridge/rx", "data": "a55a"})
+    assert (await ws.receive_json())["success"]
+    await ws.send_json({"id": 4, "type": "unsubscribe_events", "subscription": 2})
+    assert (await ws.receive_json())["success"]
+    assert not get_bridge(hass).attached
+
+    await ws.send_json({"id": 5, "type": f"{DOMAIN}/project/export"})
+    project = (await ws.receive_json())["result"]
+    assert project["sites"][0]["id"] == "FF-12-34-80"
+    await ws.send_json({"id": 6, "type": f"{DOMAIN}/ha_senders/plan", "stick_base_id": "FF-AA-80-00",
+                        "targets": [{"site": "FF-12-34-80", "address": 1, "bit": 0}]})
+    res = await ws.receive_json()
+    assert res["result"]["result"]["assigned"][0]["sender_id"] == "FF-AA-80-01"

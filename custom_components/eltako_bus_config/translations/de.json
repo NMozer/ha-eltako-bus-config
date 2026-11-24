@@ -3,19 +3,20 @@
     "step": {
       "user": {
         "title": "Eltako-Bus verbinden",
-        "description": "Wähle die serielle Schnittstelle, über die Home Assistant den Gerätespeicher der Baureihe 14 lesen und schreiben soll. Empfohlen ist die Mini-USB-Buchse des FAM14 – genau wie bei PCT14.",
+        "description": "Wähle, wie Home Assistant den Bus erreicht. Fester Anschluss: die Mini-USB-Buchse eines FAM14 am HA-Rechner – genau wie bei PCT14. Ohne festen Anschluss steckst du zum Konfigurieren einen Laptop an den jeweiligen FAM14 und verbindest ihn im Panel („Laptop-Brücke“, braucht HTTPS).",
         "data": {
           "port": "Serielle Schnittstelle",
           "gateway": "Gateway"
         },
         "data_description": {
-          "port": "Am besten den stabilen Pfad unter /dev/serial/by-id verwenden.",
+          "port": "Am besten den stabilen Pfad unter /dev/serial/by-id verwenden. Leer lassen bei „Nur Laptop-Brücke“.",
           "gateway": "Der FGW14-USB-Modus ist experimentell – prüfe ihn nach der Einrichtung mit „Verbindung testen“ im Panel."
         }
       }
     },
     "error": {
-      "cannot_connect": "Die Schnittstelle konnte nicht geöffnet werden (belegt oder nicht vorhanden?)."
+      "cannot_connect": "Die Schnittstelle konnte nicht geöffnet werden (belegt oder nicht vorhanden?).",
+      "port_required": "Bitte eine Schnittstelle wählen – oder „Nur Laptop-Brücke“."
     },
     "abort": {
       "already_configured": "Bus-Konfigurator für Eltako ist bereits eingerichtet.",
@@ -41,7 +42,8 @@
       "options": {
         "fam14": "FAM14 (Mini-USB, empfohlen)",
         "fgw14usb": "FGW14-USB (experimentell)",
-        "rs485": "Direkter RS485-Adapter am Bus (9600 Baud)"
+        "rs485": "Direkter RS485-Adapter am Bus (9600 Baud)",
+        "bridge": "Nur Laptop-Brücke (kein fester Anschluss)"
       }
     }
   }

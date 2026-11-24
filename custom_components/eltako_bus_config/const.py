@@ -10,12 +10,16 @@ CONF_SCAN_TIMEOUT = "scan_timeout"
 GATEWAY_FAM14 = "fam14"
 GATEWAY_FGW14_USB = "fgw14usb"
 GATEWAY_RS485 = "rs485"
+GATEWAY_BRIDGE = "bridge"  # no fixed connection: only the laptop bridge in the panel
 
 GATEWAYS = {
     GATEWAY_FAM14: {"baudrate": 57600, "send_delay": 0.002},
     GATEWAY_FGW14_USB: {"baudrate": 57600, "send_delay": 0.012},
     GATEWAY_RS485: {"baudrate": 9600, "send_delay": 0.002},
+    GATEWAY_BRIDGE: {"baudrate": 57600, "send_delay": 0.002},
 }
+
+BRIDGE_BAUDRATE = 57600  # FAM14 Mini-USB
 
 DEFAULT_SCAN_TIMEOUT = 0.3
 
@@ -25,4 +29,4 @@ STATIC_URL = "/eltako_bus_config_static"
 PROGRESS_EVENT = "eltako_bus_config_progress"
 STORAGE_KEY = "eltako_bus_config.devices"
 STORAGE_VERSION = 1
-VERSION = "0.6.0"
+VERSION = "0.7.0"

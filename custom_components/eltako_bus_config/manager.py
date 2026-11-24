@@ -14,7 +14,7 @@ import re
 import time
 from typing import Any
 
-from . import catalog
+from . import catalog, pct14
 from .protocol import (
     FAM_ADDRESS,
     DiscoveryReply,
@@ -31,10 +31,18 @@ from .protocol import (
     memory_write_request,
     ORG_MEM_SELECT,
     ORG_MEM_WRITE,
+    central_switch_data,
+    id_add,
     parse_discovery_reply,
     parse_radio,
+    radio_4bs_request,
+    radio_rps_request,
+    str_to_id,
+    teach_in_4bs_data,
+    TEACH_IN_EEPS,
 )
 from .senders import SenderStore
+from .sites import NO_FAM, PROJECT_FORMAT, PROJECT_VERSION, SiteStore
 from .transport import BusTransport, TransportError
 
 _LOGGER = logging.getLogger(__name__)
@@ -65,6 +73,7 @@ class BusDevice:
     is_fam: bool
     memory: list[bytes | None] = field(default_factory=list)
     read_at: str | None = None
+    source: str | None = None  # "pct14" for devices known only from a PCT14 export
 
     @classmethod
     def from_reply(cls, reply: DiscoveryReply) -> BusDevice:
@@ -98,6 +107,7 @@ class BusDevice:
             "type": catalog.device_type_info(dt, self.memory_size),
             "memory": [row.hex() if row is not None else None for row in self.memory],
             "read_at": self.read_at,
+            "source": self.source,
         }
 
     @classmethod
@@ -110,6 +120,7 @@ class BusDevice:
             is_fam=bool(data.get("is_fam", False)),
             memory=[bytes.fromhex(r) if r else None for r in data.get("memory", [])],
             read_at=data.get("read_at"),
+            source=data.get("source"),
         )
 
 
@@ -209,6 +220,8 @@ class BusManager:
         progress: ProgressCallback | None = None,
         on_devices_changed: Callable[[], Awaitable[None]] | None = None,
         senders: SenderStore | None = None,
+        sites: SiteStore | None = None,
+        bridge: Any = None,
     ) -> None:
         self._transport_factory = transport_factory
         self.backups = backups
@@ -225,6 +238,10 @@ class BusManager:
         self.bus_locked_by_fam: bool | None = None
         self.echo: bool | None = None
         self.senders: SenderStore | None = senders
+        self.sites: SiteStore | None = sites
+        self.bridge = bridge
+        self._connected: tuple[str, bool] | None = None  # (installation seen on the bus, seen via laptop bridge)
+        self.fixed_port = True  # False when only the laptop bridge can reach a bus
         self._stop_listen: asyncio.Event | None = None
 
     # ------------------------------------------------------------- utilities
@@ -236,9 +253,53 @@ class BusManager:
             _LOGGER.exception("progress callback failed")
 
     async def _changed(self) -> None:
+        if self.sites is not None and self.sites.active:
+            self.sites.store_devices(self.sites.active, self._devices_payload(), self.last_scan)
         self.register_known_senders()
         if self._on_devices_changed:
             await self._on_devices_changed()
+
+    def _devices_payload(self) -> list[dict[str, Any]]:
+        return [d.as_dict() | {"type": None} for _, d in sorted(self.devices.items())]
+
+    @property
+    def connected_id(self) -> str | None:
+        """Installation currently on the bus, as far as known (None = unknown / nothing connected)."""
+        if self._connected is None:
+            return None
+        site_id, via_bridge = self._connected
+        bridge_now = bool(self.bridge and self.bridge.attached)
+        if via_bridge != bridge_now or (not bridge_now and not self.fixed_port):
+            return None  # the connection it was seen on is gone
+        return site_id
+
+    @connected_id.setter
+    def connected_id(self, site_id: str | None) -> None:
+        self._connected = None if site_id is None else (site_id, bool(self.bridge and self.bridge.attached))
+
+    @property
+    def active_site_id(self) -> str | None:
+        return self.sites.active if self.sites is not None else None
+
+    async def _check_site(self, t: BusTransport) -> None:
+        """Refuse to touch a bus whose FAM14 does not belong to the selected installation."""
+        if self.sites is None or not self.sites.active:
+            return
+        fam = await self._discover(t, FAM_ADDRESS, timeout=0.6, retries=2)
+        connected = NO_FAM
+        if fam is not None:
+            try:
+                connected = id_to_str((await self._read_row(t, FAM_ADDRESS, 1))[:4])
+            except BusError:
+                return  # FAM present but base ID unreadable: no reliable check possible
+        self.connected_id = connected
+        if connected != self.sites.active:
+            site = self.sites.get(self.sites.active) or {}
+            raise BusError(
+                f"Am Bus hängt {'kein FAM14' if connected == NO_FAM else f'der FAM14 {connected}'}, ausgewählt ist "
+                f"die Anlage „{site.get('name') or self.sites.active}“. Bitte die passende Anlage wählen oder "
+                "den Bus neu scannen."
+            )
 
     @contextlib.asynccontextmanager
     async def _session(self, operation: str, *, lock_bus: bool = True):
@@ -395,11 +456,16 @@ class BusManager:
                                             progress_span=0.7 / max(1, len(todo)))
             self.devices = found
             self.last_scan = _now()
+            self.connected_id = self.base_id or NO_FAM
+            if self.sites is not None:
+                self.sites.ensure(self.connected_id)
+                self.sites.active = self.connected_id
         await self._changed()
         return [d.as_dict() for _, d in sorted(self.devices.items())]
 
     async def read_device(self, address: int) -> dict[str, Any]:
         async with self._session(f"read:{address}") as t:
+            await self._check_site(t)
             reply = await self._discover(t, address, timeout=0.6, retries=3)
             if reply is None:
                 raise BusError(f"Kein Gerät an Adresse {address}")
@@ -417,6 +483,7 @@ class BusManager:
         if not parsed:
             raise ValueError("Keine Zeilen zum Schreiben")
         async with self._session(f"write:{address}") as t:
+            await self._check_site(t)
             reply = await self._discover(t, address, timeout=0.6, retries=3)
             if reply is None:
                 raise BusError(f"Kein Gerät an Adresse {address}")
@@ -450,6 +517,8 @@ class BusManager:
                 written.append(row)
             dev.read_at = _now()
             self.devices[address] = dev
+        if self.sites is not None and self.sites.active:
+            self.sites.clear_pending(self.sites.active, address, list(parsed))
         await self._changed()
         return {"device": dev.as_dict(), "written_rows": written, "backup_id": backup_id}
 
@@ -535,11 +604,22 @@ class BusManager:
         _LOGGER.info("Listening finished (bus locked: %s): %d sender(s) seen", lock_bus, len(seen))
         return sorted(seen.values(), key=lambda e: (e["bus_device"], -e["count"]))
 
+    def _all_devices(self) -> list[BusDevice]:
+        devices = list(self.devices.values())
+        if self.sites is not None:
+            for site in self.sites.sites.values():
+                if site["id"] == self.sites.active:
+                    continue
+                for d in site["devices"]:
+                    with contextlib.suppress(Exception):
+                        devices.append(BusDevice.from_dict(d))
+        return devices
+
     def register_known_senders(self) -> None:
-        """Make all IDs found in device ID tables known to the sender store."""
+        """Make all IDs found in device ID tables (of all installations) known to the sender store."""
         if not self.senders:
             return
-        for dev in self.devices.values():
+        for dev in self._all_devices():
             for g in catalog.groups_for(dev.device_type, dev.memory_size):
                 for row in range(g.start, g.end):
                     val = dev.memory[row] if row < len(dev.memory) else None
@@ -548,6 +628,311 @@ class BusManager:
                     sid = id_to_str(val[:4])
                     kind = "bus_sender" if val[:3] == b"\x00\x00\xb0" else "unknown"
                     self.senders.add_known(sid, kind=kind, key=val[4], function=val[5])
+        if self.sites is not None:
+            for site in self.sites.sites.values():
+                for entries in site.get("pct_entries", {}).values():
+                    for e in entries:
+                        if e["id"] != "00-00-00-00":
+                            kind = "bus_sender" if e["id"].startswith("00-00-B0-") else "unknown"
+                            self.senders.add_known(e["id"], kind=kind, key=e["key"], function=e["function"])
+
+    # ------------------------------------------------------- installations
+    def _require_sites(self) -> SiteStore:
+        if self.sites is None:
+            raise ValueError("Anlagenverwaltung ist nicht verfügbar")
+        return self.sites
+
+    def load_site(self, site_id: str | None) -> None:
+        """Show the stored devices of an installation (without touching the bus)."""
+        sites = self._require_sites()
+        site = sites.get(site_id)
+        devices: dict[int, BusDevice] = {}
+        if site:
+            for d in site["devices"]:
+                with contextlib.suppress(Exception):
+                    dev = BusDevice.from_dict(d)
+                    devices[dev.address] = dev
+        self.devices = devices
+        self.last_scan = site["last_scan"] if site else None
+
+    async def detect_site(self) -> dict[str, Any]:
+        """Read the connected FAM14's base ID and open (or create) its installation."""
+        async with self._session("connect") as t:
+            await self._read_fam(t)
+        self.connected_id = self.base_id or NO_FAM
+        created = False
+        if self.sites is not None:
+            created = self.connected_id not in self.sites.sites
+            self.sites.ensure(self.connected_id)
+            self.sites.select(self.connected_id)
+            self.load_site(self.connected_id)
+        return {"site": self.connected_id, "created": created}
+
+    def select_site(self, site_id: str) -> dict[str, Any]:
+        if self.operation:
+            raise BusyError(f"Bus ist belegt: {self.operation}")
+        self._require_sites().select(site_id)
+        self.load_site(site_id)
+        return self.state()
+
+    def site_details(self, site_id: str | None = None) -> dict[str, Any]:
+        sites = self._require_sites()
+        site = sites.get(site_id or sites.active)
+        if site is None:
+            return {}
+        return {
+            "id": site["id"], "base_id": site["base_id"], "name": site["name"], "location": site["location"],
+            "source": site["source"], "operating_mode": site["operating_mode"],
+            "feedback": sites.feedback_ids(site), "device_names": site["device_names"],
+            "pending": site["pending"], "pct_entries": site["pct_entries"],
+        }
+
+    def import_pct14(self, xml_text: str, name: str | None = None) -> dict[str, Any]:
+        """Create or update an installation from a PCT14 XML export."""
+        sites = self._require_sites()
+        parsed = pct14.parse(xml_text)
+        site_id = parsed["base_id"]
+        created = site_id not in sites.sites
+        site = sites.ensure(site_id, source="pct14")
+        has_bus_data = any(d.get("memory") and all(r is not None for r in d["memory"])
+                           for d in site["devices"] if not d.get("is_fam"))
+        devices, mapped, unmapped = [], [], []
+        pct_entries: dict[str, list[dict[str, Any]]] = {}
+        for dev in parsed["devices"]:
+            memory, ok = pct14.device_memory(dev)
+            dt = catalog.identify(bytes.fromhex(dev["model"]), dev["size"])
+            label = f"{dt.name if dt.key != 'UNKNOWN' else dev['name']} Adr. {dev['address']}"
+            (mapped if ok else unmapped).append(label)
+            if not ok and dev["entries"]:
+                pct_entries[str(dev["address"])] = dev["entries"]
+            devices.append({
+                "address": dev["address"], "size": dev["size"], "memory_size": dev["memory_size"],
+                "model": dev["model"], "is_fam": False, "memory": memory, "read_at": None, "source": "pct14",
+            })
+            for addr, ch_name in pct14.channel_names(dev).items():
+                site["channels"].setdefault(addr, ch_name)
+            if dev["description"]:
+                site["device_names"].setdefault(str(dev["address"]), dev["description"])
+            if self.senders:
+                for e in dev["entries"]:
+                    if e["description"] and not (self.senders.senders.get(e["id"]) or {}).get("name"):
+                        self.senders.update(e["id"], name=e["description"])
+        if not has_bus_data:
+            site["devices"] = devices
+        site["pct_entries"] = pct_entries
+        site["feedback"] = parsed["feedback"]
+        site["operating_mode"] = parsed["operating_mode"]
+        if name or (not site["name"] and parsed["description"]):
+            site["name"] = (name or parsed["description"]).strip()
+        sites.persist()
+        if sites.active is None:
+            sites.active = site_id
+        if sites.active == site_id and not has_bus_data:
+            self.load_site(site_id)
+        self.register_known_senders()
+        return {
+            "site": site_id, "created": created, "devices": len(devices), "mapped": mapped,
+            "unmapped": unmapped, "kept_bus_data": has_bus_data, "feedback": len(parsed["feedback"]),
+        }
+
+    def export_project(self) -> dict[str, Any]:
+        sites = self._require_sites()
+        return {
+            "format": PROJECT_FORMAT,
+            "version": PROJECT_VERSION,
+            "created": _now(),
+            "house": dict(sites.house),
+            "sites": sites.export_sites(),
+            "senders": self.senders.list() if self.senders else [],
+        }
+
+    def import_project(self, data: dict[str, Any]) -> dict[str, Any]:
+        sites = self._require_sites()
+        if data.get("format") != PROJECT_FORMAT:
+            raise ValueError("Keine Projektdatei des Bus-Konfigurators")
+        created = updated = 0
+        for raw in data.get("sites", []):
+            _site, is_new = sites.import_site(raw)
+            created += is_new
+            updated += not is_new
+        for key, value in (data.get("house") or {}).items():
+            if value and not sites.house.get(key):
+                sites.house[key] = value
+        senders = 0
+        if self.senders:
+            for snd in data.get("senders", []):
+                sid = snd.get("id")
+                if not sid:
+                    continue
+                cur = self.senders.senders.get(sid)
+                if cur is None:
+                    self.senders.senders[sid] = snd
+                    senders += 1
+                elif snd.get("name") and not cur.get("name"):
+                    cur["name"] = snd["name"]
+                    senders += 1
+            if senders:
+                self.senders.update(next(iter(self.senders.senders)))  # persist
+        if sites.active is None and sites.sites:
+            sites.active = next(iter(sites.sites))
+        sites.persist()
+        self.load_site(sites.active)
+        self.register_known_senders()
+        return {"created": created, "updated": updated, "senders": senders}
+
+    # -------------------------------------------------------- radio tools
+    async def send_radio(self, sender_id: str, action: str, *, eep: str = "A5-38-08", db0: int | None = None) -> dict[str, Any]:
+        """Put a radio telegram on the bus (the FAM14 decides whether it is transmitted)."""
+        sender = str_to_id(sender_id)
+        if action == "teach_in":
+            if eep not in TEACH_IN_EEPS:
+                raise ValueError(f"Für {eep} kann kein Lerntelegramm erzeugt werden")
+            frame = radio_4bs_request(sender, teach_in_4bs_data(eep))
+        elif action in ("on", "off"):
+            frame = radio_4bs_request(sender, central_switch_data(action == "on"))
+        elif action == "rps":
+            if db0 is None:
+                raise ValueError("Für ein Tastertelegramm fehlt das Datenbyte")
+            frame = radio_rps_request(sender, db0)
+        else:
+            raise ValueError(f"Unbekannte Aktion: {action}")
+        async with self._session(f"radio:{action}", lock_bus=False) as t:
+            await t.send(frame)
+            await asyncio.sleep(0.2)
+        raw = frame.serialize().hex(" ")
+        _LOGGER.info("Radio telegram %s from %s sent: %s", action, sender_id, raw)
+        return {"frame": raw}
+
+    # ---------------------------------------------- Home Assistant senders
+    def ha_sender_targets(self, stick_base_id: str | None = None) -> list[dict[str, Any]]:
+        """All actuator channels of all installations that can take a Home Assistant sender ID."""
+        sites = self._require_sites()
+        base = str_to_id(stick_base_id) if stick_base_id else None
+        base_int = int.from_bytes(base, "big") if base else None
+        out = []
+        for site in sites.sites.values():
+            pend = site["pending"]
+            for d in sorted(site["devices"], key=lambda x: x["address"]):
+                if d.get("is_fam"):
+                    continue
+                dev = None
+                with contextlib.suppress(Exception):
+                    dev = BusDevice.from_dict(d)
+                if dev is None:
+                    continue
+                dt = dev.device_type
+                fn = catalog.SUGGESTED_FUNCTION.get(dt.key, {}).get("bus_sender")
+                if fn is None:
+                    continue
+                groups = catalog.groups_for(dt, dev.memory_size)
+                rows: dict[int, bytes | None] = {}
+                for g in groups:
+                    for r in range(g.start, g.end):
+                        p = pend.get(str(dev.address), {}).get(str(r))
+                        rows[r] = bytes.fromhex(p) if p else dev.memory[r] if r < len(dev.memory) else None
+                known = all(v is not None for v in rows.values())
+                if dt.channel_mode == catalog.CH_BITMASK and dev.size > 1:
+                    bits = list(range(min(8, dev.size)))
+                elif dt.channel_mode == catalog.CH_DALI:
+                    bits = list(range(16)) + [16]
+                else:
+                    bits = [-1]
+                for bit in bits:
+                    ch_addr = dev.address + (bit if bit >= 0 and bit < 16 else 0)
+                    if dt.channel_mode == catalog.CH_DALI and bit < 16 and str(ch_addr) not in site["channels"]:
+                        continue  # only named DALI groups (plus broadcast) are offered
+                    existing = []
+                    for v in rows.values():
+                        if not v or not any(v[:4]) or v[5] != fn:
+                            continue
+                        hit = (v[6] & (1 << bit)) if dt.channel_mode == catalog.CH_BITMASK and dev.size > 1 else \
+                            (v[6] == bit) if dt.channel_mode == catalog.CH_DALI else True
+                        vid = int.from_bytes(v[:4], "big")
+                        if hit and (base_int is None or base_int < vid < base_int + 128 or v[:3] == b"\x00\x00\xb0"):
+                            existing.append(id_to_str(v[:4]))
+                    default = f"{dt.name} Adr. {dev.address}" + (
+                        f" K{bit + 1}" if dt.channel_mode == catalog.CH_BITMASK and dev.size > 1 else
+                        (" alle Gruppen" if bit == 16 else f" Gr. {bit}") if dt.channel_mode == catalog.CH_DALI else "")
+                    out.append({
+                        "site": site["id"], "site_name": site["name"] or site["id"], "address": dev.address,
+                        "bit": bit, "device": dt.name, "label": site["channels"].get(str(ch_addr)) or default,
+                        "default_label": default, "known": known, "existing": sorted(set(existing)),
+                    })
+        return out
+
+    def plan_ha_senders(self, stick_base_id: str, targets: list[dict[str, Any]]) -> dict[str, Any]:
+        """Give each target channel its own Home Assistant sender ID (stick base ID + n).
+
+        The resulting ID table entries are stored as planned changes of the
+        installation; they are written when it is connected ("Auf Geräte schreiben").
+        """
+        sites = self._require_sites()
+        base = str_to_id(stick_base_id)
+        if base[3] & 0x7F:
+            raise ValueError("Eine Basis-ID endet auf 00 oder 80 (z. B. FF-AA-80-00)")
+        sites.house["stick_base_id"] = id_to_str(base)
+        used = sites.used_ids()
+        next_n = 1
+        done, skipped = [], []
+        for tgt in targets:
+            site = sites.get(tgt["site"])
+            dev_data = next((d for d in (site or {}).get("devices", []) if d["address"] == tgt["address"]), None)
+            if site is None or dev_data is None:
+                skipped.append({**tgt, "reason": "Gerät unbekannt"})
+                continue
+            dev = BusDevice.from_dict(dev_data)
+            dt = dev.device_type
+            fn = catalog.SUGGESTED_FUNCTION.get(dt.key, {}).get("bus_sender")
+            if fn is None:
+                skipped.append({**tgt, "reason": f"{dt.name}: keine Controller-Funktion bekannt"})
+                continue
+            groups = catalog.groups_for(dt, dev.memory_size)
+            group_nr = catalog._GROUP_BY_FUNCTION.get(catalog.family(dt.key) or "", {}).get(fn)
+            group = next((g for g in groups if g.number == group_nr), groups[-1] if groups else None)
+            if group is None:
+                skipped.append({**tgt, "reason": f"{dt.name}: keine ID-Tabelle"})
+                continue
+            pend = site["pending"].get(str(dev.address), {})
+            def value(row: int, _pend=pend, _dev=dev) -> str | None:
+                if str(row) in _pend:
+                    return _pend[str(row)]
+                v = _dev.memory[row] if row < len(_dev.memory) else None
+                return v.hex() if v is not None else None
+            if any(value(r) is None for r in range(group.start, group.end)):
+                skipped.append({**tgt, "reason": "ID-Tabelle nicht bekannt – erst scannen oder PCT14-Export importieren"})
+                continue
+            bit = int(tgt.get("bit", -1))
+            if dt.channel_mode == catalog.CH_BITMASK and dev.size > 1:
+                if not 0 <= bit < min(8, dev.size):
+                    skipped.append({**tgt, "reason": "Kanal fehlt"})
+                    continue
+                ch = 1 << bit
+            elif dt.channel_mode == catalog.CH_DALI:
+                ch = bit if 0 <= bit <= 16 else 16
+            else:
+                ch = 1
+            free = next((r for r in range(group.start, group.end) if not any(bytes.fromhex(value(r))[:4])), None)
+            if free is None:
+                skipped.append({**tgt, "reason": f"{group.label} ist voll"})
+                continue
+            while next_n < 128 and id_to_str(id_add(base, next_n)) in used:
+                next_n += 1
+            if next_n >= 128:
+                skipped.append({**tgt, "reason": "Alle 127 Sender-IDs des Sticks sind vergeben"})
+                continue
+            sid_bytes = id_add(base, next_n)
+            sid = id_to_str(sid_bytes)
+            used.add(sid)
+            row_hex = (sid_bytes + bytes((0, fn, ch, 0))).hex()
+            sites.merge_pending(site["id"], dev.address, {free: row_hex})
+            ch_addr = dev.address + (bit if dt.channel_mode == catalog.CH_BITMASK and dev.size > 1 else
+                                     bit if dt.channel_mode == catalog.CH_DALI and 0 <= bit < 16 else 0)
+            label = site["channels"].get(str(ch_addr)) or f"{dt.name} Adr. {ch_addr}"
+            if self.senders:
+                self.senders.update(sid, name=f"HA: {label}", sender_type="controller")
+            done.append({**tgt, "sender_id": sid, "row": free, "function": fn, "value": row_hex, "label": label})
+        sites.persist()
+        return {"assigned": done, "skipped": skipped}
 
     # --------------------------------------------------------------- backups
     def _backup_payload(self, devices: list[BusDevice], *, name: str, kind: str) -> dict[str, Any]:
@@ -625,11 +1010,17 @@ class BusManager:
 
     # ----------------------------------------------------------------- state
     def state(self) -> dict[str, Any]:
+        site = self.sites.current if self.sites is not None else None
         return {
             "operation": self.operation,
             "last_error": self.last_error,
-            "last_scan": self.last_scan,
-            "base_id": self.base_id,
+            "last_scan": site["last_scan"] if site else self.last_scan,
+            "base_id": site["base_id"] if site else self.base_id,
+            "connected_base_id": self.base_id,
+            "active_site": self.active_site_id,
+            "connected_site": self.connected_id,
+            "site_name": (site or {}).get("name") or "",
+            "bridge": bool(self.bridge and self.bridge.attached),
             "fam_ack": self.bus_locked_by_fam,
             "echo": self.echo,
             "device_count": len([a for a in self.devices if a != FAM_ADDRESS]),

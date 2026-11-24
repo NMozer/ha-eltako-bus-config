@@ -307,6 +307,52 @@ def parse_radio(frame: Frame) -> RadioTelegram | None:
     return RadioTelegram(sender=sender, org=frame.org, data=data, status=frame.address)
 
 
+# --------------------------------------------------------------------------
+# Outgoing radio telegrams (sent on the bus with HSEQ TRT; the FAM14 decides
+# whether it transmits them over the air)
+# --------------------------------------------------------------------------
+
+MANUFACTURER_ELTAKO = 0x00D
+
+# EEPs for which a teach-in telegram can be generated: EEP -> (FUNC, TYPE)
+TEACH_IN_EEPS: dict[str, tuple[int, int]] = {
+    "A5-38-08": (0x38, 0x08),  # central command (switching / dimming / blinds commands)
+    "A5-3F-7F": (0x3F, 0x7F),  # universal (Eltako blinds actuators)
+}
+
+
+def teach_in_4bs_data(eep: str, manufacturer: int = MANUFACTURER_ELTAKO) -> bytes:
+    """DB3..DB0 of a 4BS teach-in telegram with EEP information (LRN type 1, LRN bit 0)."""
+    func, typ = TEACH_IN_EEPS[eep]
+    return bytes((
+        (func << 2) | (typ >> 5),
+        ((typ & 0x1F) << 3) | ((manufacturer >> 8) & 0x07),
+        manufacturer & 0xFF,
+        0x80,
+    ))
+
+
+def central_switch_data(on: bool) -> bytes:
+    """A5-38-08 command 1 (switching): DB3=1, DB0 = LRN bit set + switching state."""
+    return bytes((0x01, 0x00, 0x00, 0x09 if on else 0x08))
+
+
+def radio_4bs_request(sender: bytes, data: bytes, status: int = 0x00) -> Frame:
+    if len(sender) != 4 or len(data) != 4:
+        raise ValueError("4BS braucht 4 Datenbytes und eine 4-Byte-Sender-ID")
+    return Frame(hseq=HSEQ_TRT, org=ORG_4BS, data=bytes(data) + bytes(sender), address=status & 0xFF)
+
+
+def radio_rps_request(sender: bytes, db0: int, status: int = 0x30) -> Frame:
+    if len(sender) != 4:
+        raise ValueError("Sender-ID braucht 4 Byte")
+    return Frame(hseq=HSEQ_TRT, org=ORG_RPS, data=bytes((db0 & 0xFF, 0, 0, 0)) + bytes(sender), address=status & 0xFF)
+
+
+def id_add(base: bytes, offset: int) -> bytes:
+    return ((int.from_bytes(base, "big") + offset) & 0xFFFFFFFF).to_bytes(4, "big")
+
+
 def id_to_str(b: bytes) -> str:
     return "-".join(f"{x:02X}" for x in b)
 

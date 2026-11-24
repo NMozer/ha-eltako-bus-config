@@ -57,7 +57,7 @@ def _cmd(schema: dict, func: Handler):
 async def _info(hass, connection, msg, manager: BusManager):
     _m, entry = _get_manager(hass)
     return {
-        "port": entry.data[CONF_PORT],
+        "port": entry.data.get(CONF_PORT) or "",
         "gateway": entry.data[CONF_GATEWAY],
         "state": manager.state(),
         "key_functions": {str(k): v for k, v in catalog.KEY_FUNCTIONS.items()},
@@ -102,14 +102,97 @@ async def _listen_stop(hass, connection, msg, manager: BusManager):
     return {"stopped": manager.stop_listening()}
 
 
+def _channels(manager: BusManager) -> dict[str, str]:
+    if manager.sites is not None and manager.sites.active:
+        return manager.sites.channels(manager.sites.active)
+    return dict(manager.senders.channels) if manager.senders else {}
+
+
 async def _senders_list(hass, connection, msg, manager: BusManager):
     if not manager.senders:
         return {"senders": [], "channels": {}}
-    return {"senders": manager.senders.list(), "channels": dict(manager.senders.channels)}
+    return {"senders": manager.senders.list(), "channels": _channels(manager)}
 
 
 async def _channel_rename(hass, connection, msg, manager: BusManager):
+    if manager.sites is not None and manager.sites.active:
+        return {"channels": manager.sites.rename_channel(manager.sites.active, msg["address"], msg.get("name", ""))}
     return {"channels": manager.senders.rename_channel(msg["address"], msg.get("name", ""))}
+
+
+def _sites_payload(manager: BusManager) -> dict[str, Any]:
+    sites = manager.sites
+    return {
+        "sites": sites.summary(manager.connected_id) if sites else [],
+        "active": manager.active_site_id,
+        "connected": manager.connected_id,
+        "site": manager.site_details() if sites else {},
+        "house": dict(sites.house) if sites else {},
+        "state": manager.state(),
+    }
+
+
+async def _sites_list(hass, connection, msg, manager: BusManager):
+    return _sites_payload(manager)
+
+
+async def _sites_select(hass, connection, msg, manager: BusManager):
+    manager.select_site(msg["site"])
+    return _sites_payload(manager) | {"devices": [d.as_dict() for _, d in sorted(manager.devices.items())],
+                                      "channels": _channels(manager)}
+
+
+async def _sites_update(hass, connection, msg, manager: BusManager):
+    manager.sites.update_meta(msg["site"], name=msg.get("name"), location=msg.get("location"))
+    return _sites_payload(manager)
+
+
+async def _sites_delete(hass, connection, msg, manager: BusManager):
+    if msg["site"] == manager.active_site_id and manager.operation:
+        raise ValueError("Während eines Buszugriffs kann die Anlage nicht gelöscht werden")
+    manager.sites.delete(msg["site"])
+    manager.load_site(manager.sites.active)
+    return _sites_payload(manager)
+
+
+async def _sites_pending(hass, connection, msg, manager: BusManager):
+    manager.sites.set_pending(msg["site"], msg["pending"])
+    return _sites_payload(manager)
+
+
+async def _pct14_import(hass, connection, msg, manager: BusManager):
+    result = manager.import_pct14(msg["xml"], msg.get("name"))
+    return {"result": result} | _sites_payload(manager)
+
+
+async def _project_export(hass, connection, msg, manager: BusManager):
+    return manager.export_project()
+
+
+async def _project_import(hass, connection, msg, manager: BusManager):
+    result = manager.import_project(msg["data"])
+    return {"result": result} | _sites_payload(manager)
+
+
+async def _radio_send(hass, connection, msg, manager: BusManager):
+    return await manager.send_radio(msg["sender_id"], msg["action"], eep=msg.get("eep", "A5-38-08"),
+                                    db0=msg.get("db0"))
+
+
+async def _sites_detect(hass, connection, msg, manager: BusManager):
+    result = await manager.detect_site()
+    return {"result": result, "devices": [d.as_dict() for _, d in sorted(manager.devices.items())],
+            "channels": _channels(manager)} | _sites_payload(manager)
+
+
+async def _ha_senders_targets(hass, connection, msg, manager: BusManager):
+    stick = msg.get("stick_base_id") or (manager.sites.house.get("stick_base_id") if manager.sites else None)
+    return {"targets": manager.ha_sender_targets(stick), "stick_base_id": stick}
+
+
+async def _ha_senders_plan(hass, connection, msg, manager: BusManager):
+    result = manager.plan_ha_senders(msg["stick_base_id"], msg["targets"])
+    return {"result": result} | _sites_payload(manager)
 
 
 async def _senders_update(hass, connection, msg, manager: BusManager):
@@ -164,6 +247,7 @@ async def _backup_restore(hass, connection, msg, manager: BusManager):
 _ADDRESS = vol.All(vol.Coerce(int), vol.Range(min=1, max=255))
 _SENDER_ID = vol.Match(r"^[0-9A-F]{2}(-[0-9A-F]{2}){3}$")
 _BACKUP_ID = vol.Match(r"^[A-Za-z0-9_\-]+$")
+_SITE = vol.Match(r"^([0-9A-F]{2}(-[0-9A-F]{2}){3}|OHNE-FAM14)$")
 
 COMMANDS = [
     ({vol.Required("type"): f"{DOMAIN}/info"}, _info),
@@ -210,6 +294,57 @@ COMMANDS = [
         },
         _channel_rename,
     ),
+    ({vol.Required("type"): f"{DOMAIN}/sites/list"}, _sites_list),
+    ({vol.Required("type"): f"{DOMAIN}/sites/select", vol.Required("site"): _SITE}, _sites_select),
+    (
+        {
+            vol.Required("type"): f"{DOMAIN}/sites/update",
+            vol.Required("site"): _SITE,
+            vol.Optional("name"): vol.All(str, vol.Length(max=80)),
+            vol.Optional("location"): vol.All(str, vol.Length(max=80)),
+        },
+        _sites_update,
+    ),
+    ({vol.Required("type"): f"{DOMAIN}/sites/delete", vol.Required("site"): _SITE}, _sites_delete),
+    ({vol.Required("type"): f"{DOMAIN}/sites/detect"}, _sites_detect),
+    (
+        {
+            vol.Required("type"): f"{DOMAIN}/sites/pending",
+            vol.Required("site"): _SITE,
+            vol.Required("pending"): {vol.Coerce(str): {vol.Coerce(str): str}},
+        },
+        _sites_pending,
+    ),
+    (
+        {vol.Required("type"): f"{DOMAIN}/pct14/import", vol.Required("xml"): str,
+         vol.Optional("name"): vol.All(str, vol.Length(max=80))},
+        _pct14_import,
+    ),
+    ({vol.Required("type"): f"{DOMAIN}/project/export"}, _project_export),
+    ({vol.Required("type"): f"{DOMAIN}/project/import", vol.Required("data"): dict}, _project_import),
+    (
+        {
+            vol.Required("type"): f"{DOMAIN}/radio/send",
+            vol.Required("sender_id"): _SENDER_ID,
+            vol.Required("action"): vol.In(["teach_in", "on", "off", "rps"]),
+            vol.Optional("eep", default="A5-38-08"): str,
+            vol.Optional("db0"): vol.All(vol.Coerce(int), vol.Range(min=0, max=255)),
+        },
+        _radio_send,
+    ),
+    ({vol.Required("type"): f"{DOMAIN}/ha_senders/targets", vol.Optional("stick_base_id"): _SENDER_ID},
+     _ha_senders_targets),
+    (
+        {
+            vol.Required("type"): f"{DOMAIN}/ha_senders/plan",
+            vol.Required("stick_base_id"): _SENDER_ID,
+            vol.Required("targets"): [
+                {vol.Required("site"): _SITE, vol.Required("address"): _ADDRESS,
+                 vol.Optional("bit", default=-1): vol.All(vol.Coerce(int), vol.Range(min=-1, max=16))}
+            ],
+        },
+        _ha_senders_plan,
+    ),
     ({vol.Required("type"): f"{DOMAIN}/backup/list"}, _backup_list),
     ({vol.Required("type"): f"{DOMAIN}/backup/create", vol.Optional("name"): str}, _backup_create),
     ({vol.Required("type"): f"{DOMAIN}/backup/get", vol.Required("backup_id"): _BACKUP_ID}, _backup_get),
@@ -237,7 +372,44 @@ COMMANDS = [
 ]
 
 
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {vol.Required("type"): f"{DOMAIN}/bridge/attach", vol.Optional("label"): vol.All(str, vol.Length(max=120))}
+)
+@callback
+def _ws_bridge_attach(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
+    """The panel offers the serial port of the computer it runs on (Web Serial)."""
+    from . import get_bridge
+
+    hub = get_bridge(hass)
+    msg_id = msg["id"]
+
+    def send(data: bytes) -> None:
+        connection.send_message(websocket_api.event_message(msg_id, {"tx": data.hex()}))
+
+    def replaced() -> None:
+        connection.send_message(websocket_api.event_message(msg_id, {"detached": "replaced"}))
+
+    connection.subscriptions[msg_id] = hub.attach(send, replaced, msg.get("label"))
+    connection.send_result(msg_id)
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {vol.Required("type"): f"{DOMAIN}/bridge/rx", vol.Required("data"): vol.Match(r"^([0-9a-fA-F]{2})*$")}
+)
+@callback
+def _ws_bridge_rx(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
+    """Bytes received by the browser from the FAM14 (handled synchronously to keep their order)."""
+    from . import get_bridge
+
+    get_bridge(hass).feed(bytes.fromhex(msg["data"]))
+    connection.send_result(msg["id"])
+
+
 @callback
 def async_register_websocket(hass: HomeAssistant) -> None:
     for schema, func in COMMANDS:
         websocket_api.async_register_command(hass, _cmd(schema, func))
+    websocket_api.async_register_command(hass, _ws_bridge_attach)
+    websocket_api.async_register_command(hass, _ws_bridge_rx)

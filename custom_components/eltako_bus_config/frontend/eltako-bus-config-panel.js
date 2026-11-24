@@ -10,6 +10,9 @@ const idStr = (b) => b.slice(0, 4).map((x) => x.toString(16).padStart(2, "0").to
 const cleanHex = (s) => String(s || "").replace(/[\s\-:]/g, "").toLowerCase();
 const isEmptyRow = (h) => !h || /^0+$/.test(h);
 const fmtDate = (s) => (s ? new Date(s).toLocaleString("de-DE") : "–");
+const u8ToHex = (u) => Array.from(u, (x) => x.toString(16).padStart(2, "0")).join("");
+const hexToU8 = (h) => new Uint8Array((h.match(/../g) || []).map((x) => parseInt(x, 16)));
+const FAM_BAUD = 57600;
 
 const STYLE = `
 :host{display:block;height:100%;background:var(--primary-background-color);color:var(--primary-text-color);font-family:var(--paper-font-body1_-_font-family, Roboto, sans-serif);}
@@ -94,6 +97,12 @@ input.hex.chg{border-color:var(--warning-color,#ff9800);background:rgba(255,152,
 .scn input{width:56px;font:inherit;font-size:13px;padding:3px 5px;border-radius:6px;border:1px solid var(--divider-color);background:var(--card-background-color);color:var(--primary-text-color);text-align:right}
 .scn input.chg{border-color:var(--warning-color,#ff9800);background:rgba(255,152,0,.08)}
 .kv{display:grid;grid-template-columns:auto 1fr;gap:4px 16px;font-size:14px}
+.sitesel{font:inherit;font-size:14px;padding:6px 8px;border-radius:8px;border:1px solid rgba(255,255,255,.5);background:transparent;color:inherit;max-width:260px}
+.sitesel option{color:#212121}
+.bridgebadge{font-size:12px;padding:3px 9px;border-radius:12px;background:rgba(255,255,255,.2);white-space:nowrap}
+input.txt{font:inherit;font-size:13.5px;padding:4px 6px;border-radius:6px;border:1px solid var(--divider-color);background:var(--card-background-color);color:var(--primary-text-color)}
+.tgt{display:flex;gap:8px;align-items:center;padding:4px 2px;border-top:1px solid var(--divider-color);font-size:13.5px}
+.tgt.off{opacity:.55}
 `;
 
 class EltakoPctPanel extends HTMLElement {
@@ -104,6 +113,7 @@ class EltakoPctPanel extends HTMLElement {
       view: "devices", info: null, devices: [], sel: null, sub: "table", showEmpty: false,
       pending: {}, progress: null, busy: false, error: null, backups: [], dialog: null, toast: null,
       senders: [], channels: {}, monitorSecs: 120, monitorLock: false, hideBus: true, flash: {}, monitoring: false,
+      sites: [], site: {}, house: {}, bridge: { active: false }, radio: { sender: "" },
     };
     this._hass = null;
     this._unsub = null;
@@ -137,15 +147,20 @@ class EltakoPctPanel extends HTMLElement {
   set narrow(n) { this._narrow = n; if (this._menu) this._menu.narrow = n; }
   set panel(_p) {}
 
-  disconnectedCallback() { if (this._unsub) { this._unsub.then((u) => u()); this._unsub = null; } }
+  disconnectedCallback() {
+    if (this._unsub) { this._unsub.then((u) => u()); this._unsub = null; }
+    this._bridgeClose();
+  }
   connectedCallback() { if (this._hass && !this._unsub) this._subscribe(); }
 
   async _init() {
     this._subscribe();
     try {
-      const [info, dev, snd] = await Promise.all([this._ws("info"), this._ws("devices"), this._ws("senders/list")]);
+      const [info, dev, snd, sites] = await Promise.all([this._ws("info"), this._ws("devices"), this._ws("senders/list"), this._ws("sites/list")]);
       this.s.info = info; this.s.devices = dev.devices; this.s.senders = snd.senders; this.s.channels = snd.channels || {};
+      this._applySites(sites, true);
       if (!this.s.sel && dev.devices.length) this.s.sel = (dev.devices.find((d) => !d.is_fam) || dev.devices[0]).address;
+      if (!sites.sites.length && !dev.devices.length) this.s.view = "sites";
     } catch (e) { this.s.error = this._msg(e); }
     this.render();
   }
@@ -188,6 +203,42 @@ class EltakoPctPanel extends HTMLElement {
   }
 
   get dev() { return this.s.devices.find((d) => d.address === this.s.sel); }
+  get st() { return this.s.info?.state || {}; }
+  // Is there any way to reach a bus right now (fixed port or laptop bridge)?
+  get reachable() { return !!(this.st.bridge || (this.s.info?.port && this.s.info?.gateway !== "bridge")); }
+  // May the selected installation be written now? (otherwise changes are only planned)
+  get canWrite() {
+    const st = this.st;
+    if (!this.reachable) return false;
+    return !st.connected_site || !st.active_site || st.connected_site === st.active_site;
+  }
+  siteLabel(x) { return x ? (x.name || (x.id === "OHNE-FAM14" ? "Bus ohne FAM14" : `FAM14 ${x.base_id || x.id}`)) : ""; }
+  tableKnown(d) { return d.type.groups.every((g) => { for (let r = g.start; r < g.end; r++) if (d.memory[r] === null || d.memory[r] === undefined) return false; return true; }); }
+  _applySites(r, loadPending = false) {
+    if (!r) return;
+    const s = this.s;
+    s.sites = r.sites || []; s.site = r.site || {}; s.house = r.house || {};
+    if (r.state && s.info) s.info.state = r.state;
+    if (r.devices) s.devices = r.devices;
+    if (r.channels) s.channels = r.channels;
+    if (!s.radio.sender && s.house.stick_base_id) s.radio.sender = this._idPlus(s.house.stick_base_id, 1);
+    if (loadPending) {
+      s.pending = {};
+      for (const [a, rows] of Object.entries(s.site.pending || {})) s.pending[+a] = { ...rows };
+    }
+  }
+  _idPlus(id, n) { const v = (parseInt(id.replace(/-/g, ""), 16) + n) >>> 0; return v.toString(16).toUpperCase().padStart(8, "0").match(/../g).join("-"); }
+  async _reloadSites(loadPending = false) {
+    try { this._applySites(await this._ws("sites/list"), loadPending); } catch (e) { this.s.error = this._msg(e); }
+    this.render();
+  }
+  async _savePending(toast = true) {
+    const s = this.s; if (!s.site?.id) return;
+    const r = await this._ws("sites/pending", { site: s.site.id, pending: s.pending });
+    this._applySites(r);
+    if (toast) this._toast("Änderungen vorgemerkt – sie werden geschrieben, sobald diese Anlage verbunden ist");
+    this.render();
+  }
   get kf() { return this.s.info?.key_functions || {}; }
   pendingFor(a) { return this.s.pending[a] || {}; }
   rowValue(d, r) { const p = this.pendingFor(d.address)[r]; return p !== undefined ? p : d.memory[r]; }
@@ -208,11 +259,14 @@ class EltakoPctPanel extends HTMLElement {
       ? { a: act.dataset.a, v: act.dataset.v, val: act.value, pos: act.selectionStart } : null;
     root.innerHTML = `<style>${STYLE}</style>
       <div class="toolbar"><span id="menu"></span><h1>Bus-Konfigurator für Eltako</h1>
-        <div class="tabs"><button data-a="view" data-v="devices" class="${s.view === "devices" ? "on" : ""}">Geräte</button>
+        ${s.sites.length ? `<select class="sitesel" data-a="site-sel" title="Anlage (FAM14) wählen">${s.sites.map((x) => `<option value="${esc(x.id)}" ${x.active ? "selected" : ""}>${esc(this.siteLabel(x))}${x.connected ? " ●" : ""}</option>`).join("")}</select>` : ""}
+        ${s.bridge.active ? `<span class="bridgebadge" title="${esc(s.bridge.label || "")}">Laptop verbunden</span>` : ""}
+        <div class="tabs"><button data-a="view" data-v="sites" class="${s.view === "sites" ? "on" : ""}">Anlagen</button>
+        <button data-a="view" data-v="devices" class="${s.view === "devices" ? "on" : ""}">Geräte</button>
         <button data-a="view" data-v="learn" class="${s.view === "learn" ? "on" : ""}">Einlernen</button>
         <button data-a="view" data-v="backups" class="${s.view === "backups" ? "on" : ""}">Sicherungen</button>
         <button data-a="view" data-v="info" class="${s.view === "info" ? "on" : ""}">Verbindung</button></div></div>
-      <main>${this._status()}${s.view === "devices" ? this._devicesView() : s.view === "learn" ? this._learnView() : s.view === "backups" ? this._backupsView() : this._infoView()}</main>
+      <main>${this._status()}${s.view === "sites" ? this._sitesView() : s.view === "devices" ? this._devicesView() : s.view === "learn" ? this._learnView() : s.view === "backups" ? this._backupsView() : this._infoView()}</main>
       ${s.dialog ? this._dialog() : ""}
       ${s.toast ? `<div class="pendingbar" style="position:fixed;left:50%;transform:translateX(-50%);bottom:16px;border-color:${s.toast.kind === "ok" ? "var(--success-color,#43a047)" : "var(--error-color)"}">${esc(s.toast.text)}</div>` : ""}`;
     if (!this._menu) { this._menu = document.createElement("ha-menu-button"); }
@@ -240,6 +294,13 @@ class EltakoPctPanel extends HTMLElement {
         <div class="note" style="margin-top:6px">Während des Zugriffs ist der Bus gesperrt – Aktoren reagieren kurz nicht auf Funktelegramme.</div></div>`;
     }
     if (s.error) h += `<div class="card" style="border-color:var(--error-color)"><div class="row"><span class="grow" style="color:var(--error-color)">${esc(s.error)}</span><button class="b sm" data-a="clear-error">Schließen</button></div></div>`;
+    if (s.view !== "sites" && s.site?.id && !this.canWrite && !s.progress) {
+      const st = this.st;
+      const why = !this.reachable ? "Kein Bus erreichbar – Laptop an den FAM14 stecken und unter „Anlagen“ verbinden."
+        : `Am Bus hängt gerade ${st.connected_site === "OHNE-FAM14" ? "ein Bus ohne FAM14" : `der FAM14 ${esc(st.connected_site)}`}.`;
+      h += `<div class="card" style="border-color:var(--warning-color,#ff9800)"><b>${esc(this.siteLabel(s.site))} ist nicht verbunden.</b>
+        <div class="muted" style="margin-top:4px">Du siehst den gespeicherten Stand. Änderungen werden vorgemerkt und beim nächsten Anschluss dieser Anlage geschrieben. ${why}</div></div>`;
+    }
     return h;
   }
 
@@ -250,16 +311,18 @@ class EltakoPctPanel extends HTMLElement {
       const adr = d.is_fam ? "FAM" : d.size > 1 ? `${d.address}–${last}` : d.address;
       const unread = d.memory.some((r) => r === null) && !d.is_fam;
       const pend = Object.keys(this.pendingFor(d.address)).length;
+      const dname = s.site?.device_names?.[String(d.address)];
       return `<div class="dev ${d.address === s.sel ? "on" : ""}" data-a="sel" data-v="${d.address}">
         <span class="adr">${adr}</span>
-        <div class="grow"><div class="n">${esc(d.type.name)}</div><div class="muted">${esc(d.type.description)} · V${esc(d.version)}</div></div>
-        ${pend ? `<span class="badge w">${pend} geändert</span>` : unread ? `<span class="badge">nicht gelesen</span>` : ""}</div>`;
+        <div class="grow"><div class="n">${esc(d.type.name)}${dname ? ` <span class="muted" style="font-weight:400">· ${esc(dname)}</span>` : ""}</div><div class="muted">${esc(d.type.description)} · V${esc(d.version)}</div></div>
+        ${pend ? `<span class="badge w">${pend} geändert</span>` : d.source === "pct14" && unread ? `<span class="badge">aus PCT14</span>` : unread ? `<span class="badge">nicht gelesen</span>` : ""}</div>`;
     }).join("");
+    const noBus = !this.reachable;
     const left = `<div class="card" style="padding:12px">
-      <div class="row" style="margin-bottom:8px"><button class="b p" data-a="scan" ${s.busy ? "disabled" : ""}>Bus scannen</button>
-      <button class="b" data-a="scan-list" ${s.busy ? "disabled" : ""} title="Nur Geräteliste, ohne Speicher">Nur Liste</button></div>
+      <div class="row" style="margin-bottom:8px"><button class="b p" data-a="scan" ${s.busy || noBus ? "disabled" : ""}>Bus scannen</button>
+      <button class="b" data-a="scan-list" ${s.busy || noBus ? "disabled" : ""} title="Nur Geräteliste, ohne Speicher">Nur Liste</button></div>
       <div class="muted" style="margin-bottom:8px">${st.last_scan ? `Letzter Scan: ${fmtDate(st.last_scan)}` : "Noch kein Scan"}${s.info?.state?.base_id ? ` · Basis-ID ${esc(s.info.state.base_id)}` : ""}</div>
-      ${list || `<div class="empty-state">Starte einen Bus-Scan, um die Geräte der Baureihe 14 einzulesen.</div>`}</div>`;
+      ${list || `<div class="empty-state">${noBus ? "Kein Bus erreichbar. Unter „Anlagen“ einen Laptop verbinden oder einen PCT14-Export importieren." : "Starte einen Bus-Scan, um die Geräte der Baureihe 14 einzulesen."}</div>`}</div>`;
     return `<div class="layout">${left}<div>${this.dev ? this._detail(this.dev) : `<div class="card empty-state">Wähle links ein Gerät aus.</div>`}</div></div>`;
   }
 
@@ -267,10 +330,16 @@ class EltakoPctPanel extends HTMLElement {
     const s = this.s; const t = d.type;
     const unread = d.memory.some((r) => r === null);
     const hasTable = t.groups.length > 0;
+    const tableOk = hasTable && this.tableKnown(d);
     if (!hasTable && s.sub === "table") s.sub = "raw";
     const tabs = [hasTable && ["table", "ID-Tabelle"], this.isDali(d) && ["scenes", "Lichtszenen"], ["settings", "Einstellungen"], ["raw", "Rohspeicher"]].filter(Boolean);
+    const pctEntries = s.site?.pct_entries?.[String(d.address)] || [];
     let body;
-    if (unread) body = `<div class="empty-state">Der Speicher dieses Geräts wurde noch nicht gelesen.<br><br><button class="b p" data-a="read" ${s.busy ? "disabled" : ""}>Speicher auslesen</button></div>`;
+    const readBtn = this.canWrite ? `<br><br><button class="b p" data-a="read" ${s.busy ? "disabled" : ""}>Speicher auslesen</button>` : "";
+    if (unread && !(s.sub === "table" && tableOk)) body = d.source === "pct14"
+      ? `<div class="empty-state">${s.sub === "table" ? "Die ID-Tabelle dieses Gerätetyps kann aus dem PCT14-Export noch nicht sicher übernommen werden." : "Dieser Teil des Speichers ist nicht im PCT14-Export enthalten."}${readBtn}</div>
+        ${pctEntries.length && s.sub === "table" ? `<table><thead><tr><th>Nr.</th><th>Sender</th><th>Taste</th><th>Funktion</th><th>Kanal</th><th>Wert</th></tr></thead><tbody>${pctEntries.map((e) => `<tr><td>${e.number}</td><td>${esc(this.senderName(e.id))}<div class="note mono">${esc(e.id)}</div></td><td>${esc(this.keyLabel(e.key))}</td><td>${e.function} – ${esc(this.fnLabel(d, e.function))}</td><td>${e.channel}</td><td>${e.value}</td></tr>`).join("")}</tbody></table><div class="note">Einträge laut PCT14-Export (nur Anzeige).</div>` : ""}`
+      : `<div class="empty-state">Der Speicher dieses Geräts wurde noch nicht gelesen.${readBtn}</div>`;
     else if (s.sub === "table") body = this._tableView(d);
     else if (s.sub === "scenes" && this.isDali(d)) body = this._scenesView(d);
     else if (s.sub === "settings") body = this._rowsView(d, t.settings_rows[0], t.settings_rows[1], "Die Einstellungszeilen sind gerätespezifisch. Bekannte Bedeutungen stehen daneben – alles andere bitte nur mit Vorlage aus einer PCT14-Sicherung ändern.");
@@ -279,13 +348,13 @@ class EltakoPctPanel extends HTMLElement {
     return `<div class="card">
       <div class="row"><div class="grow"><div style="font-size:20px">${esc(t.name)} <span class="muted">Adresse ${d.address}${d.size > 1 ? `–${d.address + d.size - 1}` : ""}</span></div>
       <div class="muted">${esc(t.description)} · Firmware ${esc(d.version)} · Modell ${esc(spaced(d.model))} · ${d.memory_size} Zeilen${d.read_at ? ` · gelesen ${fmtDate(d.read_at)}` : ""}</div></div>
-      ${!d.is_fam ? `<button class="b" data-a="identify" ${s.busy ? "disabled" : ""}>Blinken</button>` : ""}
-      <button class="b" data-a="read" ${s.busy ? "disabled" : ""}>Neu auslesen</button></div>
+      ${!d.is_fam && this.canWrite ? `<button class="b" data-a="identify" ${s.busy ? "disabled" : ""}>Blinken</button>` : ""}
+      ${this.canWrite ? `<button class="b" data-a="read" ${s.busy ? "disabled" : ""}>Neu auslesen</button>` : ""}</div>
       ${t.key === "UNKNOWN" ? `<div class="note" style="margin-top:8px">Dieser Gerätetyp ist noch nicht im Katalog – nur der Rohspeicher ist verfügbar.</div>` : ""}
       <div class="subtabs">${tabs.map(([k, l]) => `<button data-a="sub" data-v="${k}" class="${s.sub === k ? "on" : ""}">${l}</button>`).join("")}</div>
       ${body}
       ${n ? `<div class="pendingbar"><b>${n} ungespeicherte Änderung${n > 1 ? "en" : ""}</b><span class="grow"></span>
-        <button class="b" data-a="discard">Verwerfen</button><button class="b p" data-a="confirm-write" ${s.busy ? "disabled" : ""}>Auf Gerät schreiben</button></div>` : ""}
+        <button class="b" data-a="discard">Verwerfen</button>${this.canWrite ? `<button class="b p" data-a="confirm-write" ${s.busy ? "disabled" : ""}>Auf Gerät schreiben</button>` : `<button class="b p" data-a="plan-save">Vormerken</button>`}</div>` : ""}
     </div>`;
   }
 
@@ -443,7 +512,7 @@ class EltakoPctPanel extends HTMLElement {
   }
   usage(sid) {
     const res = [];
-    for (const d of this.s.devices) if (!d.is_fam && !d.memory.some((r) => r === null))
+    for (const d of this.s.devices) if (!d.is_fam && d.type.groups.length && this.tableKnown(d))
       for (const e of this.entriesOf(d)) if (e.id === sid && !e.removed) res.push({ d, e });
     return res;
   }
@@ -466,7 +535,7 @@ class EltakoPctPanel extends HTMLElement {
 
   _assign(addr, bit, sid, key) {
     const d = this.s.devices.find((x) => x.address === addr); if (!d) return;
-    if (d.memory.some((r) => r === null)) { this.s.error = `${this.devLabel(d)}: Speicher zuerst auslesen.`; this.render(); return; }
+    if (!this.tableKnown(d)) { this.s.error = `${this.devLabel(d)}: ID-Tabelle unbekannt – Speicher zuerst auslesen.`; this.render(); return; }
     const snd = this.sender(sid);
     const useBit = d.type.channel_mode === "bitmask" && d.size > 1 && bit >= 0;
     // same sender + key already present? -> just add the channel to that row (like PCT14)
@@ -559,7 +628,7 @@ class EltakoPctPanel extends HTMLElement {
     const devs = s.devices.filter((d) => !d.is_fam && d.type.groups.length);
     const opts = this._senderOptions(true);
     const tiles = devs.map((d) => {
-      const unread = d.memory.some((r) => r === null);
+      const unread = !this.tableKnown(d);
       const entries = unread ? [] : this.entriesOf(d);
       let chans = d.type.channel_mode === "bitmask" && d.size > 1 ? [...Array(Math.min(8, d.size)).keys()] : [-1];
       let daliHidden = 0;
@@ -594,7 +663,7 @@ class EltakoPctPanel extends HTMLElement {
         <div class="grow"><b>Sender erkennen</b><div class="muted">Lauschen starten, dann nacheinander die Taster betätigen. Erkannte Sender bleiben gespeichert und können benannt werden.</div></div>
         <select data-a="monitor-secs" style="font:inherit;padding:6px;border-radius:8px;border:1px solid var(--divider-color);background:var(--card-background-color);color:var(--primary-text-color)">
           ${[[60, "1 Minute"], [120, "2 Minuten"], [300, "5 Minuten"], [900, "15 Minuten"]].map(([v, l]) => `<option value="${v}" ${s.monitorSecs === v ? "selected" : ""}>${l}</option>`).join("")}</select>
-        ${s.monitoring ? `<button class="b" data-a="monitor-stop">Stoppen</button>` : `<button class="b p" data-a="monitor-start" ${s.busy ? "disabled" : ""}>Lauschen starten</button>`}</div>
+        ${s.monitoring ? `<button class="b" data-a="monitor-stop">Stoppen</button>` : `<button class="b p" data-a="monitor-start" ${s.busy || !this.canWrite ? "disabled" : ""}>Lauschen starten</button>`}</div>
         <div class="row" style="margin-top:8px;gap:16px">
           <label class="muted"><input type="checkbox" data-a="hide-bus" ${s.hideBus ? "checked" : ""}> Rückmeldungen der Aktoren ausblenden${s.hideBus && hiddenCount ? ` (${hiddenCount} ausgeblendet)` : ""}</label>
           <span class="grow"></span><button class="b sm" data-a="senders-clear">Unbenannte entfernen</button></div></div>
@@ -606,7 +675,7 @@ class EltakoPctPanel extends HTMLElement {
         ${cards || `<div class="card empty-state">Noch keine Sender. Starte „Lauschen“ und drücke deine Taster.</div>`}</div>
         <div>${tiles || `<div class="card empty-state">Keine Aktoren mit ID-Tabelle bekannt. Zuerst unter „Geräte“ den Bus scannen.</div>`}
         ${pendDevs ? `<div class="pendingbar"><b>${pendRows} Änderung${pendRows > 1 ? "en" : ""} an ${pendDevs} Gerät${pendDevs > 1 ? "en" : ""}</b><span class="grow"></span>
-          <button class="b" data-a="discard-all">Alle verwerfen</button><button class="b p" data-a="confirm-all" ${s.busy ? "disabled" : ""}>Auf Geräte schreiben</button></div>` : ""}</div></div>`;
+          <button class="b" data-a="discard-all">Alle verwerfen</button>${this.canWrite ? `<button class="b p" data-a="confirm-all" ${s.busy ? "disabled" : ""}>Auf Geräte schreiben</button>` : `<button class="b p" data-a="plan-save">Vormerken</button>`}</div>` : ""}</div></div>`;
   }
 
   _confirmAllDialog() {
@@ -621,6 +690,43 @@ class EltakoPctPanel extends HTMLElement {
     return `<div class="overlay"><div class="dialog"><h2>Änderungen auf die Geräte schreiben?</h2>
       <p class="muted">Pro Gerät wird der Bus kurz gesperrt, der Speicher gesichert, geschrieben und jede Zeile zurückgelesen.</p>${parts}
       <div class="row" style="justify-content:flex-end;margin-top:14px"><button class="b" data-a="close">Abbrechen</button><button class="b p" data-a="write-all">Jetzt schreiben</button></div></div></div>`;
+  }
+
+  _sitesView() {
+    const s = this.s; const st = this.st;
+    const secure = window.isSecureContext; const serial = !!navigator.serial;
+    const srcLabel = { bus: "vom Bus", pct14: "PCT14-Export", "pct14+bus": "PCT14 + Bus", project: "Projektdatei" };
+    const rows = s.sites.map((x) => `<tr>
+      <td><input class="txt" style="width:100%;box-sizing:border-box;font-weight:500" data-a="site-name" data-v="${esc(x.id)}" value="${esc(x.name)}" placeholder="${esc(this.siteLabel({ ...x, name: "" }))} – Namen vergeben…">
+        <div class="note mono">${esc(x.base_id || "ohne FAM14")}</div></td>
+      <td><input class="txt" style="width:130px" data-a="site-loc" data-v="${esc(x.id)}" value="${esc(x.location)}" placeholder="Ort, z. B. UV EG"></td>
+      <td><span class="badge">${esc(srcLabel[x.source] || x.source)}</span></td>
+      <td>${x.devices}${x.devices ? `<div class="note">${x.read} gelesen</div>` : ""}</td>
+      <td title="${esc(x.feedback.map((f) => `Adr. ${f.address} → ${f.id}`).join("\n"))}">${x.feedback.length || "–"}</td>
+      <td>${x.pending ? `<span class="badge w">${x.pending} vorgemerkt</span>` : ""}</td>
+      <td style="white-space:nowrap">${x.connected ? `<span class="badge ok">verbunden</span> ` : ""}${x.active ? `<span class="badge">ausgewählt</span>` : ""}</td>
+      <td style="text-align:right;white-space:nowrap">${x.active ? "" : `<button class="b sm" data-a="site-open" data-v="${esc(x.id)}">Öffnen</button>`}
+        <button class="b sm d" data-a="site-del" data-v="${esc(x.id)}" title="Anlage aus Home Assistant entfernen">✕</button></td></tr>`).join("");
+    const fb = (s.site?.feedback || []);
+    const bridgeCard = `<div class="card"><div class="row"><div class="grow"><b>Laptop-Brücke</b>
+        <div class="muted">Laptop per Mini-USB an den FAM14 des Verteilers stecken und hier verbinden. Der Browser reicht die Daten nur an Home Assistant weiter – Sicherungen, Namen und Zuordnungen landen direkt hier.</div></div>
+        ${s.bridge.active ? `<button class="b" data-a="bridge-detect" ${s.busy ? "disabled" : ""}>Anlage erkennen</button><button class="b" data-a="bridge-close">Trennen</button>`
+          : `<button class="b p" data-a="bridge-open" ${!secure || !serial ? "disabled" : ""}>Laptop verbinden</button>`}</div>
+      ${s.bridge.active ? `<div class="note" style="margin-top:6px">Verbunden: ${esc(s.bridge.label || "USB-Gerät")}${st.connected_site ? ` · am Bus: ${esc(st.connected_site)}` : ""}</div>` : ""}
+      ${!secure ? `<div class="err">Diese Seite ist nicht über HTTPS geöffnet. Der Browser erlaubt USB-Zugriff (Web Serial) nur auf HTTPS-Seiten – öffne Home Assistant über eine HTTPS-Adresse (eigenes Zertifikat oder Nabu Casa).</div>`
+        : !serial ? `<div class="err">Dieser Browser unterstützt Web Serial nicht. Nutze Chrome, Edge, Opera oder Firefox ab Version 151 auf einem Computer.</div>` : ""}</div>`;
+    return `${bridgeCard}
+      <div class="card"><div class="row"><div class="grow"><b>Anlagen im Haus</b><div class="muted">Eine Anlage je FAM14, erkannt an dessen Basis-ID. Neue Anlagen entstehen beim Scan, beim Verbinden eines Laptops oder per PCT14-Import.</div></div>
+        <button class="b" data-a="pct-import">PCT14-Export importieren…</button><input type="file" accept=".xml,text/xml,application/xml" id="pct-file" style="display:none" data-a="pct-file">
+        <button class="b" data-a="prj-export" ${s.sites.length ? "" : "disabled"}>Projekt exportieren</button>
+        <button class="b" data-a="prj-import">Projekt importieren…</button><input type="file" accept=".json,application/json" id="prj-file" style="display:none" data-a="prj-file"></div>
+        ${rows ? `<table style="margin-top:10px"><thead><tr><th>Name / Basis-ID</th><th>Ort</th><th>Quelle</th><th>Geräte</th><th title="Busadressen, deren Zustand der FAM14 per Funk meldet">Funk-Rückm.</th><th></th><th></th><th></th></tr></thead><tbody>${rows}</tbody></table>`
+          : `<div class="empty-state">Noch keine Anlage. Verbinde einen Laptop mit einem FAM14, scanne den Bus oder importiere einen PCT14-Export.</div>`}</div>
+      <div class="card"><div class="row"><div class="grow"><b>Home Assistant per Funkstick</b>
+        <div class="muted">Jeder Kanal im Haus bekommt eine eigene Sender-ID des Funksticks (Basis-ID + 1, 2, 3 …) und wird direkt in die ID-Tabellen eingetragen – ohne Einlernen am Drehschalter. Die Einträge werden vorgemerkt und beim Anschluss der jeweiligen Anlage geschrieben.</div></div>
+        <button class="b p" data-a="ha-assist" ${s.sites.length ? "" : "disabled"}>HA-Sender eintragen…</button></div>
+        ${fb.length ? `<div style="margin-top:10px"><div class="muted">Rückmelde-IDs von „${esc(this.siteLabel(s.site))}“ (für die Steuer-Integration):</div>
+          <div class="row" style="gap:6px;margin-top:4px">${fb.map((f) => `<span class="badge mono" title="Busadresse ${f.address}">Adr. ${f.address} → ${esc(f.id)}</span>`).join("")}</div></div>` : ""}</div>`;
   }
 
   _backupsView() {
@@ -639,16 +745,17 @@ class EltakoPctPanel extends HTMLElement {
   }
 
   _infoView() {
-    const i = this.s.info; const st = i?.state || {};
-    const gw = { fam14: "FAM14 (Mini-USB)", fgw14usb: "FGW14-USB (experimentell)", rs485: "RS485-Adapter" }[i?.gateway] || i?.gateway;
+    const i = this.s.info; const st = this.st;
+    const gw = { fam14: "FAM14 (Mini-USB)", fgw14usb: "FGW14-USB (experimentell)", rs485: "RS485-Adapter", bridge: "nur Laptop-Brücke" }[i?.gateway] || i?.gateway;
     const p = this.s.probe;
     return `<div class="card"><b>Verbindung</b><div class="kv" style="margin-top:10px">
-      <span class="muted">Schnittstelle</span><span class="mono">${esc(i?.port)}</span>
+      <span class="muted">Schnittstelle</span><span class="mono">${esc(i?.port || "kein fester Anschluss")}</span>
       <span class="muted">Gateway</span><span>${esc(gw)}</span>
+      <span class="muted">Laptop-Brücke</span><span>${st.bridge ? `verbunden${this.s.bridge.label ? ` (${esc(this.s.bridge.label)})` : ""}` : "–"}</span>
       <span class="muted">Basis-ID (FAM14)</span><span class="mono">${esc(st.base_id || "–")}</span>
       <span class="muted">Bussperre bestätigt</span><span>${st.fam_ack == null ? "–" : st.fam_ack ? "ja (FAM14 antwortet)" : "nein"}</span>
       <span class="muted">Echo auf der Leitung</span><span>${st.echo == null ? "–" : st.echo ? "ja" : "nein"}</span></div>
-      <div class="row" style="margin-top:14px"><button class="b p" data-a="probe" ${this.s.busy ? "disabled" : ""}>Verbindung testen</button>
+      <div class="row" style="margin-top:14px"><button class="b p" data-a="probe" ${this.s.busy || !this.reachable ? "disabled" : ""}>Verbindung testen</button>
       <span class="muted">Prüft Bussperre, FAM14 und ob Geräte auf Speicheranfragen antworten.</span></div>
       ${p ? `<div class="kv" style="margin-top:12px">
         <span class="muted">FAM14 bestätigt Sperre</span><span>${p.fam_lock_ack ? "✔" : "✘"}</span>
@@ -657,10 +764,18 @@ class EltakoPctPanel extends HTMLElement {
         <span class="muted">Speicher lesbar</span><span>${p.memory_read_ok ? `✔ <span class="mono">${esc(p.sample_row)}</span>` : "✘"}</span>
         <span class="muted">Telegramme empfangen</span><span>${p.frames_received}</span></div>
         <div class="note" style="margin-top:8px">${p.memory_read_ok ? "Speicherzugriff funktioniert – alle Funktionen sind nutzbar." : "Speicherzugriff funktioniert über dieses Gateway nicht. Verbinde Home Assistant mit der Mini-USB-Buchse des FAM14 und wähle in der Integration „FAM14“."}</div>` : ""}</div>
+      <div class="card"><b>Funktest</b>
+        <div class="muted" style="margin-top:4px">Legt ein Funktelegramm auf den Bus. Ob der FAM14 es in die Luft sendet, zeigt ein Funkaktor im Lernmodus (z. B. Baureihe 61/62) oder ein Funkstick, der mithört. Der Bus bleibt dabei frei.</div>
+        <div class="row" style="margin-top:10px"><label class="muted">Sender-ID</label>
+          <input class="txt mono" style="width:130px" data-a="radio-sender" value="${esc(this.s.radio.sender)}" placeholder="FF-AA-80-01">
+          <button class="b" data-a="radio" data-v="teach_in" ${this.s.busy || !this.canWrite ? "disabled" : ""}>Lerntelegramm A5-38-08</button>
+          <button class="b" data-a="radio" data-v="on" ${this.s.busy || !this.canWrite ? "disabled" : ""}>Ein</button>
+          <button class="b" data-a="radio" data-v="off" ${this.s.busy || !this.canWrite ? "disabled" : ""}>Aus</button></div>
+        ${this.s.radio.last ? `<div class="note mono" style="margin-top:6px">Gesendet: ${esc(this.s.radio.last)}</div>` : ""}</div>
       <div class="card"><b>Hinweise</b><ul class="muted" style="line-height:1.6">
       <li>Vor dem Schreiben sichert die Integration den Speicher des Geräts automatisch und liest jede geschriebene Zeile zur Kontrolle zurück.</li>
       <li>PCT14 und diese Integration dürfen nicht gleichzeitig auf den FAM14 zugreifen.</li>
-      <li>Die Gerätesteuerung (Licht, Rollläden …) übernimmt weiterhin die Eltako-Integration. Neue Sender-IDs aus Home Assistant trägst du hier mit der Funktion „Schaltzustand/Dimmwert/… vom Controller (GFVS)“ ein.</li></ul></div>`;
+      <li>Die Gerätesteuerung (Licht, Rollläden …) übernimmt weiterhin deine Steuer-Integration. Sender-IDs aus Home Assistant trägst du unter „Anlagen → HA-Sender eintragen“ oder in der ID-Tabelle mit der Funktion „… vom Controller (GFVS)“ ein.</li></ul></div>`;
   }
 
   // ---------------------------------------------------------------- dialogs
@@ -670,9 +785,34 @@ class EltakoPctPanel extends HTMLElement {
     if (g.type === "confirm-write") return this._confirmDialog(g);
     if (g.type === "restore") return this._restoreDialog(g);
     if (g.type === "confirm-all") return this._confirmAllDialog();
+    if (g.type === "ha-assist") return this._assistDialog(g);
     if (g.type === "confirm") return `<div class="overlay"><div class="dialog"><h2>${esc(g.title)}</h2><p>${esc(g.text)}</p>
       <div class="row" style="justify-content:flex-end"><button class="b" data-a="close">Abbrechen</button><button class="b p ${g.danger ? "d" : ""}" data-a="dlg-ok">${esc(g.ok)}</button></div></div></div>`;
     return "";
+  }
+
+  _assistDialog(g) {
+    const bySite = {};
+    for (const t of g.targets || []) (bySite[t.site] = bySite[t.site] || []).push(t);
+    const key = (t) => `${t.site}|${t.address}|${t.bit}`;
+    const list = Object.entries(bySite).map(([site, ts]) => `<h3 style="font-size:15px;margin:12px 0 4px">${esc(ts[0].site_name)}</h3>${ts.map((t) => {
+      const dis = !t.known;
+      return `<label class="tgt ${dis ? "off" : ""}"><input type="checkbox" data-f="tgt" data-v="${esc(key(t))}" ${g.sel.includes(key(t)) ? "checked" : ""} ${dis ? "disabled" : ""}>
+        <span class="grow"><b>${esc(t.label)}</b> <span class="muted">${esc(t.label !== t.default_label ? t.default_label : t.device)}</span></span>
+        ${dis ? `<span class="note">ID-Tabelle unbekannt</span>` : t.existing.length ? `<span class="note mono" title="Bereits eingetragene Controller-IDs">schon: ${esc(t.existing.join(", "))}</span>` : ""}</label>`;
+    }).join("")}`).join("");
+    const res = g.result;
+    return `<div class="overlay"><div class="dialog"><h2>Home-Assistant-Sender eintragen</h2>
+      <p class="muted">Basis-ID des Funksticks eingeben (steht in der Steuer-Integration, z. B. FF-AA-80-00) und die Kanäle wählen. Jeder Kanal bekommt die nächste freie ID; geschrieben wird beim Anschluss der jeweiligen Anlage.</p>
+      <div class="field"><label>Basis-ID des Funksticks</label><div class="row"><input class="grow mono" data-f="stick" value="${esc(g.stick || "")}" placeholder="FF-AA-80-00">
+        <button class="b" data-a="assist-load">Kanäle laden</button></div><div class="err" id="err-stick">${esc(g.err || "")}</div></div>
+      ${res ? `<div class="card" style="padding:10px"><b>${res.assigned.length} ${res.assigned.length === 1 ? "Kanal" : "Kanäle"} vorgemerkt</b>
+          ${res.assigned.map((a) => `<div class="tgt"><span class="mono">${esc(a.sender_id)}</span><span class="grow">${esc(a.label)}</span><span class="note">Zeile ${a.row}</span></div>`).join("")}
+          ${res.skipped.map((a) => `<div class="tgt off"><span class="grow">Adr. ${a.address}${a.bit >= 0 ? ` K${a.bit + 1}` : ""}</span><span class="note">${esc(a.reason)}</span></div>`).join("")}
+          <div class="note" style="margin-top:6px">In der Steuer-Integration legst du pro Kanal ein Gerät mit genau dieser Sender-ID an.</div></div>`
+        : g.targets ? (list || `<div class="muted">Keine Aktoren mit ID-Tabelle bekannt.</div>`) : ""}
+      <div class="row" style="justify-content:flex-end;margin-top:14px"><button class="b" data-a="close">${res ? "Schließen" : "Abbrechen"}</button>
+        ${res ? "" : `<button class="b p" data-a="assist-ok" ${g.sel.length ? "" : "disabled"}>${g.sel.length ? `${g.sel.length} ${g.sel.length === 1 ? "Kanal" : "Kanäle"} eintragen` : "Kanäle wählen"}</button>`}</div></div></div>`;
   }
 
   _editDialog(g) {
@@ -764,6 +904,21 @@ class EltakoPctPanel extends HTMLElement {
 
   _onChange(ev) {
     const t = ev.target; const a = t.dataset.a; const g = this.s.dialog;
+    if (g?.type === "ha-assist" && t.dataset.f) {
+      if (t.dataset.f === "stick") g.stick = t.value.trim().toUpperCase();
+      else if (t.dataset.f === "tgt") { const v = t.dataset.v; g.sel = t.checked ? [...g.sel, v] : g.sel.filter((x) => x !== v); this.render(); }
+      return;
+    }
+    if (a === "site-sel") { this._selectSite(t.value); return; }
+    if (a === "site-name" || a === "site-loc") {
+      const field = a === "site-name" ? "name" : "location";
+      this._ws("sites/update", { site: t.dataset.v, [field]: t.value.trim() }).then((r) => { this._applySites(r); this._renderSoon(); })
+        .catch((e) => { this.s.error = this._msg(e); this.render(); });
+      return;
+    }
+    if (a === "radio-sender") { this.s.radio.sender = t.value.trim().toUpperCase(); return; }
+    if (a === "pct-file") { this._importPct(t.files[0]); t.value = ""; return; }
+    if (a === "prj-file") { this._importProject(t.files[0]); t.value = ""; return; }
     if (g?.type === "edit" && t.dataset.f === "known") {
       if (!t.value) return; const [sid, k] = t.value.split("|"); g.e.id = sid; if (k !== "" && k !== undefined) g.e.key = +k;
       const d = this.s.devices.find((x) => x.address === g.address); if (d && !g.e.idTouched) g.e.fn = this.suggestFn(d, this.sender(sid), g.e.key);
@@ -810,7 +965,7 @@ class EltakoPctPanel extends HTMLElement {
     const el = ev.target.closest("[data-a]"); if (!el || el.tagName === "INPUT" || el.tagName === "SELECT" || el.tagName === "LABEL") return;
     const a = el.dataset.a; const v = el.dataset.v; const s = this.s;
     switch (a) {
-      case "view": s.view = v; if (v === "backups") this._loadBackups(); if (v === "learn") this._loadSenders(); this.render(); break;
+      case "view": s.view = v; if (v === "backups") this._loadBackups(); if (v === "learn") this._loadSenders(); if (v === "sites") this._reloadSites(); this.render(); break;
       case "monitor-start": {
         s.monitoring = true; s.error = null; this.render();
         try { await this._ws("listen", { seconds: s.monitorSecs, lock_bus: s.monitorLock }); }
@@ -821,7 +976,50 @@ class EltakoPctPanel extends HTMLElement {
       case "sender-del": await this._ws("senders/delete", { sender_id: v }); await this._loadSenders(); break;
       case "senders-clear": { const r = await this._ws("senders/clear"); this._toast(`${r.removed} unbenannte Sender entfernt`); await this._loadSenders(); break; }
       case "unassign": { const [addr, row, bit] = v.split("|").map(Number); this._unassign(addr, row, bit); break; }
-      case "discard-all": s.pending = {}; this.render(); break;
+      case "discard-all": s.pending = {}; if (s.site?.pending && Object.keys(s.site.pending).length) await this._savePending(false); this.render(); break;
+      case "plan-save": await this._savePending(); break;
+      case "site-open": await this._selectSite(v); break;
+      case "site-del": {
+        const x = s.sites.find((y) => y.id === v);
+        s.dialog = { type: "confirm", title: "Anlage entfernen?", text: `„${this.siteLabel(x)}“ wird mit gespeichertem Stand, Kanalnamen und vorgemerkten Änderungen aus Home Assistant entfernt. Die Geräte selbst bleiben unverändert; Sicherungen bleiben erhalten.`, ok: "Entfernen", danger: true,
+          run: async () => { this._applySites(await this._ws("sites/delete", { site: v }), true); const dv = await this._ws("devices"); s.devices = dv.devices; await this._loadSenders(); } };
+        this.render(); break;
+      }
+      case "pct-import": this.shadowRoot.getElementById("pct-file").click(); break;
+      case "prj-import": this.shadowRoot.getElementById("prj-file").click(); break;
+      case "prj-export": {
+        try {
+          const data = await this._ws("project/export");
+          const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 1)], { type: "application/json" }));
+          const link = document.createElement("a"); link.href = url; link.download = `eltako-projekt-${new Date().toISOString().slice(0, 10)}.json`; link.click();
+          setTimeout(() => URL.revokeObjectURL(url), 2000);
+        } catch (e) { s.error = this._msg(e); this.render(); }
+        break;
+      }
+      case "ha-assist": {
+        s.dialog = { type: "ha-assist", stick: s.house.stick_base_id || "", sel: [], targets: null };
+        if (s.dialog.stick) await this._assistLoad(); else this.render();
+        break;
+      }
+      case "assist-load": await this._assistLoad(); break;
+      case "assist-ok": {
+        const g = s.dialog; const sel = g.sel.map((k) => { const [site, address, bit] = k.split("|"); return { site, address: +address, bit: +bit }; });
+        try {
+          const r = await this._ws("ha_senders/plan", { stick_base_id: g.stick, targets: sel });
+          g.result = r.result; this._applySites(r, true); await this._loadSenders();
+        } catch (e) { g.err = this._msg(e); }
+        this.render(); break;
+      }
+      case "bridge-open": await this._bridgeOpen(); break;
+      case "bridge-close": await this._bridgeClose(); this.render(); break;
+      case "bridge-detect": await this._detect(); break;
+      case "radio": {
+        const sender = (s.radio.sender || "").toUpperCase();
+        if (!/^[0-9A-F]{2}(-[0-9A-F]{2}){3}$/.test(sender)) { s.error = "Sender-ID im Format FF-AA-80-01 eingeben."; this.render(); break; }
+        const r = await this._run(() => this._ws("radio/send", { sender_id: sender, action: v }), { teach_in: "Lerntelegramm gesendet", on: "Ein-Befehl gesendet", off: "Aus-Befehl gesendet" }[v]);
+        if (r) { s.radio.last = r.frame; this.render(); }
+        break;
+      }
       case "dali-all": { s.daliAll = s.daliAll || {}; s.daliAll[+v] = !s.daliAll[+v]; this.render(); break; }
       case "quick-fn": { s.dialog.e.fn = +v; this.render(); break; }
       case "channel-sugg": { const i = v.indexOf("|"); this._renameChannel(+v.slice(0, i), v.slice(i + 1)); break; }
@@ -838,6 +1036,7 @@ class EltakoPctPanel extends HTMLElement {
           }
           return rows;
         }, (n) => `${n} Zeile(n) auf ${todo.length} Gerät(e) geschrieben und geprüft`);
+        await this._reloadSites();
         break;
       }
       case "sel": s.sel = +v; s.sub = "table"; this.render(); break;
@@ -847,7 +1046,11 @@ class EltakoPctPanel extends HTMLElement {
       case "scan": case "scan-list": {
         if (Object.keys(s.pending).length && !confirm("Ungespeicherte Änderungen gehen beim Scan verloren. Fortfahren?")) return;
         const r = await this._run(() => this._ws("scan", { read_memory: a === "scan" }), (x) => `${x.devices.filter((d) => !d.is_fam).length} Geräte gefunden`);
-        if (r) { s.devices = r.devices; s.info.state = r.state; s.pending = {}; if (!s.devices.find((d) => d.address === s.sel)) s.sel = s.devices.find((d) => !d.is_fam)?.address ?? null; this.render(); }
+        if (r) {
+          s.devices = r.devices; s.info.state = r.state; s.pending = {};
+          await this._reloadSites(true); await this._loadSenders();
+          if (!s.devices.find((d) => d.address === s.sel)) s.sel = s.devices.find((d) => !d.is_fam)?.address ?? null; this.render();
+        }
         break;
       }
       case "read": {
@@ -856,12 +1059,12 @@ class EltakoPctPanel extends HTMLElement {
         break;
       }
       case "identify": this._run(() => this._ws("device/identify", { address: s.sel }), "Gerät blinkt"); break;
-      case "discard": delete s.pending[s.sel]; this.render(); break;
+      case "discard": delete s.pending[s.sel]; if (s.site?.pending?.[String(s.sel)]) await this._savePending(false); this.render(); break;
       case "confirm-write": s.dialog = { type: "confirm-write" }; this.render(); break;
       case "write": {
         const d = this.dev; const rows = this.pendingFor(d.address); s.dialog = null;
         const r = await this._run(() => this._ws("device/write", { address: d.address, rows }), (x) => `${x.written_rows.length} Zeile(n) geschrieben und geprüft · Sicherung ${x.backup_id}`);
-        if (r) { this._replaceDevice(r.device); delete s.pending[d.address]; this.render(); }
+        if (r) { this._replaceDevice(r.device); delete s.pending[d.address]; await this._reloadSites(); }
         break;
       }
       case "edit": this._openEdit(+v); break;
@@ -931,6 +1134,113 @@ class EltakoPctPanel extends HTMLElement {
         break;
       }
     }
+  }
+
+  async _selectSite(id) {
+    const s = this.s;
+    if (Object.keys(s.pending).length && !Object.keys(s.site?.pending || {}).length && this.canWrite
+      && !confirm("Ungespeicherte Änderungen dieser Anlage gehen verloren. Fortfahren?")) { this.render(); return; }
+    try {
+      const r = await this._ws("sites/select", { site: id });
+      this._applySites(r, true);
+      s.sel = s.devices.find((d) => !d.is_fam)?.address ?? null; s.sub = "table";
+    } catch (e) { s.error = this._msg(e); }
+    this.render();
+  }
+
+  async _detect() {
+    const r = await this._run(() => this._ws("sites/detect"), (x) => x.result.created ? `Neue Anlage ${x.result.site} angelegt` : `Anlage ${x.result.site} erkannt`);
+    if (r) { this._applySites(r, true); this.s.sel = this.s.devices.find((d) => !d.is_fam)?.address ?? null; await this._loadSenders(); }
+  }
+
+  async _assistLoad() {
+    const g = this.s.dialog; g.err = "";
+    if (g.stick && !/^[0-9A-F]{2}(-[0-9A-F]{2}){3}$/.test(g.stick)) { g.err = "Format: FF-AA-80-00"; this.render(); return; }
+    try { const r = await this._ws("ha_senders/targets", g.stick ? { stick_base_id: g.stick } : {}); g.targets = r.targets; }
+    catch (e) { g.err = this._msg(e); }
+    this.render();
+  }
+
+  async _importPct(file) {
+    if (!file) return;
+    try {
+      const xml = await file.text();
+      const name = file.name.replace(/\.xml$/i, "").replace(/[_]+/g, " ").trim();
+      const r = await this._ws("pct14/import", { xml, name });
+      const x = r.result;
+      this._applySites(r, true); const dv = await this._ws("devices"); this.s.devices = dv.devices; await this._loadSenders();
+      this._toast(`${x.created ? "Anlage angelegt" : "Anlage aktualisiert"}: ${x.devices} Geräte${x.unmapped.length ? `, ID-Tabelle noch nicht übernehmbar bei ${x.unmapped.join(", ")}` : ""}${x.kept_bus_data ? " – vorhandener Busstand bleibt maßgeblich" : ""}`);
+    } catch (e) { this.s.error = `PCT14-Import fehlgeschlagen: ${this._msg(e)}`; }
+    this.render();
+  }
+
+  async _importProject(file) {
+    if (!file) return;
+    try {
+      const data = JSON.parse(await file.text());
+      const r = await this._ws("project/import", { data });
+      this._applySites(r, true); const dv = await this._ws("devices"); this.s.devices = dv.devices; await this._loadSenders();
+      this._toast(`Projekt importiert: ${r.result.created} neue, ${r.result.updated} aktualisierte Anlage(n)`);
+    } catch (e) { this.s.error = `Projekt-Import fehlgeschlagen: ${this._msg(e)}`; }
+    this.render();
+  }
+
+  // ------------------------------------------------- laptop bridge (Web Serial)
+  async _bridgeOpen() {
+    const s = this.s;
+    if (!navigator.serial) { s.error = "Dieser Browser unterstützt Web Serial nicht."; this.render(); return; }
+    let port;
+    try { port = await navigator.serial.requestPort(); }
+    catch (e) { if (e?.name !== "NotFoundError") { s.error = this._msg(e); this.render(); } return; }
+    try {
+      await port.open({ baudRate: FAM_BAUD });
+      const info = port.getInfo ? port.getInfo() : {};
+      const usb = info.usbVendorId ? `USB ${info.usbVendorId.toString(16).padStart(4, "0")}:${(info.usbProductId || 0).toString(16).padStart(4, "0")}` : "serielles Gerät";
+      const label = `${usb} an ${navigator.userAgentData?.platform || navigator.platform || "diesem Computer"}`;
+      const writer = port.writable.getWriter();
+      const b = { port, writer, reader: null, label };
+      this._bridge = b;
+      b.unsub = await this._hass.connection.subscribeMessage((m) => {
+        if (m.tx) writer.write(hexToU8(m.tx)).catch((e) => { s.error = `Senden an den FAM14 fehlgeschlagen: ${this._msg(e)}`; this._bridgeClose(); });
+        if (m.detached) { s.error = "Ein anderer Browser hat die Laptop-Brücke übernommen."; this._bridgeClose(false); }
+      }, { type: `${D}/bridge/attach`, label });
+      b.onDisconnect = () => { s.error = "USB-Verbindung zum FAM14 getrennt."; this._bridgeClose(); };
+      navigator.serial.addEventListener("disconnect", b.onDisconnect);
+      this._bridgeRead(b);
+      s.bridge = { active: true, label };
+      const i = await this._ws("info"); s.info = i;
+      this.render();
+      await this._detect();
+    } catch (e) {
+      s.error = `Laptop-Brücke: ${this._msg(e)}`;
+      await this._bridgeClose();
+      this.render();
+    }
+  }
+
+  async _bridgeRead(b) {
+    try {
+      b.reader = b.port.readable.getReader();
+      for (;;) {
+        const { value, done } = await b.reader.read();
+        if (done) break;
+        if (value?.length) this._hass.connection.sendMessage({ type: `${D}/bridge/rx`, data: u8ToHex(value) });
+      }
+    } catch (_e) { /* port closed */ }
+    finally { try { b.reader?.releaseLock(); } catch (_e) { /* ignore */ } }
+  }
+
+  async _bridgeClose(unsubscribe = true) {
+    const b = this._bridge; this._bridge = null;
+    if (!b) return;
+    if (b.onDisconnect) navigator.serial?.removeEventListener("disconnect", b.onDisconnect);
+    if (unsubscribe && b.unsub) { try { await b.unsub(); } catch (_e) { /* connection gone */ } }
+    try { await b.reader?.cancel(); } catch (_e) { /* ignore */ }
+    try { b.writer.releaseLock(); } catch (_e) { /* ignore */ }
+    try { await b.port.close(); } catch (_e) { /* ignore */ }
+    this.s.bridge = { active: false };
+    try { const i = await this._ws("info"); this.s.info = i; } catch (_e) { /* panel closing */ }
+    this._renderSoon();
   }
 
   _openEdit(row, address = this.s.sel, preset = null, fromLearn = false) {

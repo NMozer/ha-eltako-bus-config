@@ -1,0 +1,199 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<exchange version="6.0">
+<rootdevice>
+	<name maxnumberofcharacter="23">FAM14</name>
+	<description maxnumberofcharacter="47">Verteiler Test</description>
+		<header>
+			<address location="Data_Byte_3" byteindex="0">255</address>
+			<addressrange location="Data_Byte_2" byteindex="1">1</addressrange>
+			<numberofblocks location="Data_Byte_1" byteindex="2">127</numberofblocks>
+			<offsetfirstblock location="Data_Byte_0" byteindex="3">0</offsetfirstblock>
+			<versionofinstructionmanual location="Id_Byte_3" byteindex="4">7</versionofinstructionmanual>
+			<devicetype location="Id_Byte_2" byteindex="5">255</devicetype>
+			<versionofsoftware location="Id_Byte_1" byteindex="6">22</versionofsoftware>
+			<reservedbyte location="Id_Byte_0" byteindex="7">0</reservedbyte>
+		</header>
+	<rootdevicedata>
+		<baseid>
+			<baseid_byte_0>255</baseid_byte_0>
+			<baseid_byte_1>18</baseid_byte_1>
+			<baseid_byte_2>52</baseid_byte_2>
+			<baseid_byte_3>128</baseid_byte_3>
+		</baseid>
+		<operatingmode>5</operatingmode>
+		<feedbacklist numberoffeedbackentries="5">
+			<feedbackentry>
+				<feedbackentry_number>1</feedbackentry_number>
+				<feedbackentry_deviceaddress>1</feedbackentry_deviceaddress>
+				<feedbackentry_devicetype>6</feedbackentry_devicetype>
+			</feedbackentry>
+			<feedbackentry>
+				<feedbackentry_number>2</feedbackentry_number>
+				<feedbackentry_deviceaddress>2</feedbackentry_deviceaddress>
+				<feedbackentry_devicetype>6</feedbackentry_devicetype>
+			</feedbackentry>
+			<feedbackentry>
+				<feedbackentry_number>3</feedbackentry_number>
+				<feedbackentry_deviceaddress>3</feedbackentry_deviceaddress>
+				<feedbackentry_devicetype>6</feedbackentry_devicetype>
+			</feedbackentry>
+			<feedbackentry>
+				<feedbackentry_number>4</feedbackentry_number>
+				<feedbackentry_deviceaddress>4</feedbackentry_deviceaddress>
+				<feedbackentry_devicetype>6</feedbackentry_devicetype>
+			</feedbackentry>
+			<feedbackentry>
+				<feedbackentry_number>5</feedbackentry_number>
+				<feedbackentry_deviceaddress>5</feedbackentry_deviceaddress>
+				<feedbackentry_devicetype>102</feedbackentry_devicetype>
+			</feedbackentry>
+		</feedbacklist>
+	</rootdevicedata>
+</rootdevice>
+<devices numberofdevices="3">
+	<device>
+		<name maxnumberofcharacter="23">FSB14</name>
+		<description maxnumberofcharacter="47">Rollladen Nord</description>
+		<header>
+			<address location="Data_Byte_3" byteindex="0">1</address>
+			<addressrange location="Data_Byte_2" byteindex="1">2</addressrange>
+			<numberofblocks location="Data_Byte_1" byteindex="2">135</numberofblocks>
+			<offsetfirstblock location="Data_Byte_0" byteindex="3">8</offsetfirstblock>
+			<versionofinstructionmanual location="Id_Byte_3" byteindex="4">4</versionofinstructionmanual>
+			<devicetype location="Id_Byte_2" byteindex="5">6</devicetype>
+			<versionofsoftware location="Id_Byte_1" byteindex="6">82</versionofsoftware>
+			<reservedbyte location="Id_Byte_0" byteindex="7">0</reservedbyte>
+		</header>
+		<channels numberofchannels="2">
+			<channel channelnumber="1" maxnumberofcharacter="47" description="Nord links"/>
+			<channel channelnumber="2" maxnumberofcharacter="47" description="Nord rechts"/>
+		</channels>
+		<data>
+			<rangeofconfig numberoffeedbackids="0">
+			</rangeofconfig>
+			<rangeofid numberofentries="5">
+				<entry maxnumberofcharacter="47" description="Taster Flur">
+					<entry_number>2</entry_number>
+					<entry_id>1446253310</entry_id>
+					<entry_function>2</entry_function>
+					<entry_button>5</entry_button>
+					<entry_channel>3</entry_channel>
+					<entry_value>0</entry_value>
+				</entry>
+				<entry maxnumberofcharacter="47" description="">
+					<entry_number>3</entry_number>
+					<entry_id>30256126</entry_id>
+					<entry_function>82</entry_function>
+					<entry_button>1</entry_button>
+					<entry_channel>3</entry_channel>
+					<entry_value>0</entry_value>
+				</entry>
+				<entry maxnumberofcharacter="47" description="">
+					<entry_number>4</entry_number>
+					<entry_id>30256126</entry_id>
+					<entry_function>83</entry_function>
+					<entry_button>2</entry_button>
+					<entry_channel>3</entry_channel>
+					<entry_value>0</entry_value>
+				</entry>
+				<entry maxnumberofcharacter="47" description="">
+					<entry_number>7</entry_number>
+					<entry_id>28311552</entry_id>
+					<entry_function>31</entry_function>
+					<entry_button>0</entry_button>
+					<entry_channel>1</entry_channel>
+					<entry_value>0</entry_value>
+				</entry>
+				<entry maxnumberofcharacter="47" description="">
+					<entry_number>8</entry_number>
+					<entry_id>45088768</entry_id>
+					<entry_function>31</entry_function>
+					<entry_button>0</entry_button>
+					<entry_channel>2</entry_channel>
+					<entry_value>0</entry_value>
+				</entry>
+			</rangeofid>
+		</data>
+	</device>
+	<device>
+		<name maxnumberofcharacter="23">FSB14</name>
+		<description maxnumberofcharacter="47"></description>
+		<header>
+			<address location="Data_Byte_3" byteindex="0">3</address>
+			<addressrange location="Data_Byte_2" byteindex="1">2</addressrange>
+			<numberofblocks location="Data_Byte_1" byteindex="2">135</numberofblocks>
+			<offsetfirstblock location="Data_Byte_0" byteindex="3">8</offsetfirstblock>
+			<versionofinstructionmanual location="Id_Byte_3" byteindex="4">4</versionofinstructionmanual>
+			<devicetype location="Id_Byte_2" byteindex="5">6</devicetype>
+			<versionofsoftware location="Id_Byte_1" byteindex="6">82</versionofsoftware>
+			<reservedbyte location="Id_Byte_0" byteindex="7">0</reservedbyte>
+		</header>
+		<channels numberofchannels="2">
+			<channel channelnumber="1" maxnumberofcharacter="47" description=""/>
+			<channel channelnumber="2" maxnumberofcharacter="47" description=""/>
+		</channels>
+		<data>
+			<rangeofconfig numberoffeedbackids="0">
+			</rangeofconfig>
+			<rangeofid numberofentries="4">
+				<entry maxnumberofcharacter="47" description="">
+					<entry_number>2</entry_number>
+					<entry_id>1446253310</entry_id>
+					<entry_function>2</entry_function>
+					<entry_button>6</entry_button>
+					<entry_channel>1</entry_channel>
+					<entry_value>0</entry_value>
+				</entry>
+				<entry maxnumberofcharacter="47" description="">
+					<entry_number>6</entry_number>
+					<entry_id>2003195390</entry_id>
+					<entry_function>2</entry_function>
+					<entry_button>6</entry_button>
+					<entry_channel>2</entry_channel>
+					<entry_value>0</entry_value>
+				</entry>
+				<entry maxnumberofcharacter="47" description="">
+					<entry_number>7</entry_number>
+					<entry_id>61865984</entry_id>
+					<entry_function>31</entry_function>
+					<entry_button>0</entry_button>
+					<entry_channel>1</entry_channel>
+					<entry_value>0</entry_value>
+				</entry>
+				<entry maxnumberofcharacter="47" description="">
+					<entry_number>8</entry_number>
+					<entry_id>78643200</entry_id>
+					<entry_function>31</entry_function>
+					<entry_button>0</entry_button>
+					<entry_channel>2</entry_channel>
+					<entry_value>0</entry_value>
+				</entry>
+			</rangeofid>
+		</data>
+	</device>
+	<device>
+		<name maxnumberofcharacter="23">FWZ14-65A</name>
+		<description maxnumberofcharacter="47"></description>
+		<header>
+			<address location="Data_Byte_3" byteindex="0">5</address>
+			<addressrange location="Data_Byte_2" byteindex="1">1</addressrange>
+			<numberofblocks location="Data_Byte_1" byteindex="2">127</numberofblocks>
+			<offsetfirstblock location="Data_Byte_0" byteindex="3">8</offsetfirstblock>
+			<versionofinstructionmanual location="Id_Byte_3" byteindex="4">4</versionofinstructionmanual>
+			<devicetype location="Id_Byte_2" byteindex="5">102</devicetype>
+			<versionofsoftware location="Id_Byte_1" byteindex="6">21</versionofsoftware>
+			<reservedbyte location="Id_Byte_0" byteindex="7">0</reservedbyte>
+		</header>
+		<channels numberofchannels="1">
+			<channel channelnumber="1" maxnumberofcharacter="47" description=""/>
+		</channels>
+		<data>
+			<rangeofconfig numberoffeedbackids="0">
+			</rangeofconfig>
+			<rangeofid numberofentries="0">
+
+			</rangeofid>
+		</data>
+	</device>
+</devices>
+</exchange>
