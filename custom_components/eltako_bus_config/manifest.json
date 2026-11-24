@@ -18,10 +18,6 @@
   "requirements": [
     "pyserial-asyncio-fast>=0.11"
   ],
-  "categories": [
-    "configurator",
-    "hub"
-  ],
   "single_config_entry": true,
   "version": "0.6.0"
 }
